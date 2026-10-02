@@ -1,0 +1,23 @@
+# Mapeo RUC -> instancia de SFS de esa empresa. Ver configuracion.py.
+#
+# Cada entrada asume una estructura de carpetas ya armada en ruta_base, igual a la
+# que se preparó a mano para la primera instalación:
+#   <ruta_base>/sunat_archivos/sfs/{DATA,RPTA/{procesados,errores},CERT,VALI,
+#                                   ALMCERT,ENVIO,FORM,ORIDAT,PARSE,REPO,TEMP,FIRMA}
+#   <ruta_base>/bd/BDFacturador.db
+#   <ruta_base>/prod.yaml   (con "port: <puerto_sfs>" en applicationConnectors)
+#
+# puerto_sfs: el puerto HTTP de ESA instancia de SFS (cada empresa el suyo, nunca
+# compartido). ruta_base: carpeta raíz de esa empresa en el servidor.
+
+empresas:
+  "20609785269":
+    nombre: "SIRCON PACHACUTEC E.I.R.L."
+    puerto_sfs: 9000
+    ruta_base: /home/ubuntu/sfs
+
+  # Ejemplo de una segunda empresa, una vez dada de alta:
+  # "20XXXXXXXXX":
+  #   nombre: "EMPRESA DOS S.A.C."
+  #   puerto_sfs: 9001
+  #   ruta_base: /home/ubuntu/empresas/empresa2

@@ -1,0 +1,36 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  # Corre las pruebas antes de tocar el servidor — un push roto nunca llega a
+  # pisar lo que ya está funcionando en producción.
+  pruebas:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements-dev.txt
+      - run: python pruebas/test_facturador_api.py
+
+  desplegar:
+    needs: pruebas
+    runs-on: ubuntu-latest
+    steps:
+      - name: Conectar por SSH y actualizar
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          script: |
+            set -e
+            cd /home/ubuntu/facturador-api
+            git fetch origin main
+            git reset --hard origin/main
+            .venv/bin/pip install -r requirements.txt
+            pm2 restart facturador-api
