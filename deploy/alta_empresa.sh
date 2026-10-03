@@ -113,12 +113,29 @@ pm2 start java --name "${NOMBRE_PM2}" --interpreter none --cwd "${RUTA_BASE}" --
 pm2 save
 
 echo "Esperando a que SFS termine de arrancar..."
-sleep 8
+# Sondea en vez de un sleep fijo adivinado: un JVM nuevo arrancando compite por
+# CPU con las otras instancias ya corriendo (visto en vivo: 100% CPU en dos SFS a
+# la vez al dar de alta la segunda empresa, y el servidor llegó a colgarse del
+# todo con RAM al 81%+ antes de que PM2 tuviera pm2 startup configurado). Más
+# vale esperar lo que haga falta que fallar por apurado.
+INTENTOS=0
+until curl -s -o /dev/null "http://localhost:${PUERTO}/" || [ "$INTENTOS" -ge 30 ]; do
+    sleep 2
+    INTENTOS=$((INTENTOS + 1))
+done
+if [ "$INTENTOS" -ge 30 ]; then
+    echo "Advertencia: SFS no respondió tras 60s — puede seguir arrancando; revisa 'pm2 logs ${NOMBRE_PM2}' si lo que sigue falla." >&2
+fi
 
 echo "== 7/7: Guardando RUC/usuario SOL/ruta de trabajo (GrabarParametro.htm) =="
+# Las variables van ANTES de "python3 -c" para que bash las exporte como entorno
+# de ese proceso — puestas después del script (como estaban en una version
+# anterior de este archivo) quedan como argv, no como entorno, y
+# os.environ["RUC"] revienta con KeyError. Confirmado a la fuerza dando de alta
+# Spaxion: el script se cayó justo acá.
 RESPUESTA=$(curl -s -X POST "http://localhost:${PUERTO}/api/GrabarParametro.htm" \
     -H "Content-Type: application/json" \
-    -d "$(python3 -c '
+    -d "$(RUC="$RUC" USUARIO_SOL="$USUARIO_SOL" CLAVE_SOL="$CLAVE_SOL" RAZON_SOCIAL="$RAZON_SOCIAL" RUTA_BASE="$RUTA_BASE" python3 -c '
 import json, os
 print(json.dumps({
     "txtNumeroRuc": os.environ["RUC"],
@@ -132,7 +149,7 @@ print(json.dumps({
     "txtUsuarioSolPrincipal": os.environ["USUARIO_SOL"],
     "txtClaveSolPrincipal": os.environ["CLAVE_SOL"],
 }))
-' RUC="$RUC" USUARIO_SOL="$USUARIO_SOL" CLAVE_SOL="$CLAVE_SOL" RAZON_SOCIAL="$RAZON_SOCIAL" RUTA_BASE="$RUTA_BASE")")
+')")
 
 echo "Respuesta de GrabarParametro.htm: ${RESPUESTA}"
 if ! echo "$RESPUESTA" | grep -q '"EXITO"'; then
