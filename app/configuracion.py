@@ -1,8 +1,14 @@
 """
 Mapeo RUC -> instancia de SFS de esa empresa. Un archivo YAML a propósito, no una
 BD: son cinco filas hoy y unas pocas más el día que se sume una empresa — una BD
-para esto sería más infraestructura que datos. Lo edita a mano quien da de alta una
-empresa nueva (o el script de alta, cuando exista).
+para esto sería más infraestructura que datos. Lo edita deploy/alta_empresa.sh.
+
+IMPORTANTE: en producción, FACTURADOR_API_EMPRESAS_YAML apunta FUERA del repo
+(ver README — "Dónde vive empresas.yaml en producción"). Es estado vivo del
+servidor, no código: si viviera dentro del repo, el próximo `git reset --hard`
+de un deploy borraría las empresas dadas de alta después del último commit.
+Pasó de verdad dando de alta la segunda empresa — por eso la ruta por defecto de
+acá abajo (la del repo) es solo para desarrollo local, nunca para el servidor.
 """
 import os
 import threading
@@ -13,7 +19,7 @@ import yaml
 _RAIZ_PROYECTO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # app/ -> raíz del repo
 _RUTA_EMPRESAS = os.getenv(
     "FACTURADOR_API_EMPRESAS_YAML",
-    os.path.join(_RAIZ_PROYECTO, "empresas.yaml"),
+    os.path.join(_RAIZ_PROYECTO, "empresas.example.yaml"),
 )
 
 # Se relee en cada request (ver obtener_empresa): dar de alta una empresa nueva no

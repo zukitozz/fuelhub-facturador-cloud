@@ -63,8 +63,11 @@ JAR="${SFS_HOME}/facturadorApp-2.1.jar"
 VALI_ORIGEN="${SFS_HOME}/sunat_archivos/sfs/VALI"
 BD_ORIGEN="${SFS_HOME}/bd/BDFacturador.db"
 ESQUEMA_SQL="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/esquema_bd.sql"
-FACTURADOR_API_DIR="/home/ubuntu/facturador-api"
 RUTA_BASE="/home/ubuntu/empresas/${CARPETA}"
+# FUERA del repo a propósito — un `git reset --hard` de un deploy no debe poder
+# borrar empresas ya dadas de alta. Debe ser la MISMA ruta que usa el
+# FACTURADOR_API_EMPRESAS_YAML con el que corre el proceso de PM2 (ver README).
+EMPRESAS_YAML="/home/ubuntu/config/empresas.yaml"
 
 if [ -d "$RUTA_BASE" ]; then
     echo "Error: ya existe '$RUTA_BASE' — si es una empresa nueva, usa otro nombre de carpeta." >&2
@@ -156,15 +159,19 @@ if ! echo "$RESPUESTA" | grep -q '"EXITO"'; then
     echo "ADVERTENCIA: la respuesta no dice EXITO — revisa a mano antes de seguir." >&2
 fi
 
-echo "== Agregando entrada a empresas.yaml de facturador-api =="
+echo "== Agregando entrada a ${EMPRESAS_YAML} =="
+mkdir -p "$(dirname "${EMPRESAS_YAML}")"
 RUC="$RUC" RAZON_SOCIAL="$RAZON_SOCIAL" PUERTO="$PUERTO" RUTA_BASE="$RUTA_BASE" \
-    EMPRESAS_YAML="${FACTURADOR_API_DIR}/empresas.yaml" python3 <<'PYEOF'
+    EMPRESAS_YAML="${EMPRESAS_YAML}" python3 <<'PYEOF'
 import os
 import yaml
 
 ruta = os.environ["EMPRESAS_YAML"]
-with open(ruta, encoding="utf-8") as f:
-    data = yaml.safe_load(f) or {}
+if os.path.exists(ruta):
+    with open(ruta, encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+else:
+    data = {}
 data.setdefault("empresas", {})
 if os.environ["RUC"] in data["empresas"]:
     raise SystemExit(f"Error: el RUC {os.environ['RUC']} ya está en {ruta} — revísalo a mano.")

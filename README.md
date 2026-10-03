@@ -73,8 +73,11 @@ pytest pruebas/ -q   # o: python pruebas/test_facturador_api.py
 uvicorn app.main:app --reload --port 8000
 ```
 
-Variable de entorno opcional: `FACTURADOR_API_EMPRESAS_YAML` para apuntar a un
-`empresas.yaml` en otra ruta (por defecto, el de la raíz del repo).
+Variable de entorno `FACTURADOR_API_EMPRESAS_YAML` para decirle dónde está el
+`empresas.yaml` real. En desarrollo local, sin configurarla, usa
+`empresas.example.yaml` del repo (solo de referencia, con una empresa de
+ejemplo). **En producción es obligatorio apuntarla fuera del repo** — ver
+"Dónde vive empresas.yaml en producción" más abajo.
 
 ## Despliegue
 
@@ -96,15 +99,30 @@ repo porque es configuración del servidor, no de la app).
    git clone <url-del-repo> /home/ubuntu/facturador-api
    cd /home/ubuntu/facturador-api
    python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-   pm2 start .venv/bin/uvicorn --name facturador-api -- app.main:app --host 0.0.0.0 --port 8000
+   export FACTURADOR_API_EMPRESAS_YAML=/home/ubuntu/config/empresas.yaml
+   pm2 start .venv/bin/uvicorn --name facturador-api --interpreter none --cwd /home/ubuntu/facturador-api -- app.main:app --host 0.0.0.0 --port 8000
    pm2 save
    ```
+   El `export` antes del `pm2 start` es imprescindible — PM2 (modo fork) toma el
+   entorno de la shell que lo lanza. `--interpreter none` también lo es: sin eso
+   PM2 intenta correr `uvicorn` con Node.js y falla con `SyntaxError: Unexpected
+   identifier` (pasó de verdad la primera vez).
 2. En GitHub: Settings → Secrets and variables → Actions, agregar:
    - `SSH_HOST`: la IP pública del servidor.
    - `SSH_USER`: `ubuntu`.
    - `SSH_KEY`: el contenido completo del `.pem` (la misma llave que usas para
      conectarte por SSH/SCP hoy).
 3. Listo — el próximo push a `main` dispara el despliegue solo.
+
+### Dónde vive `empresas.yaml` en producción
+
+**`/home/ubuntu/config/empresas.yaml` — fuera del repo, a propósito.** El deploy
+automático corre `git reset --hard origin/main`, y si `empresas.yaml` viviera
+dentro del repo clonado, cada deploy borraría las empresas dadas de alta después
+del último commit. Pasó de verdad: se perdió el alta de la segunda empresa
+(Spaxion) en el primer deploy después de agregarla. `deploy/alta_empresa.sh` ya
+escribe ahí; `empresas.example.yaml` en el repo es solo documentación del formato,
+nunca se lee en producción.
 
 ## Dar de alta una empresa
 

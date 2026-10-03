@@ -5,3 +5,8 @@ venv/
 .env
 *.egg-info/
 .pytest_cache/
+
+# Estado vivo del servidor, no código — un `git reset --hard` de un deploy no
+# debe poder borrar las empresas ya dadas de alta. Ver empresas.example.yaml
+# para el formato, y README.md para dónde vive el real en producción.
+/empresas.yaml
