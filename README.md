@@ -221,3 +221,27 @@ de usarla con datos reales — hazlo siempre primero, como con la primera empres
 **Puertos:** cada empresa necesita un puerto único (y automáticamente un puerto de
 administración de Dropwizard único también, `puerto + 9081`) — lleva la cuenta de
 cuáles ya están en uso en `empresas.yaml`.
+
+## Mantenimiento diario de disco
+
+`deploy/mantenimiento_diario.py` archiva y después borra en serio los archivos
+de factura/nota/resumen ya cerrados (`DATA/` + el `.zip` del CDR en `RPTA/`) —
+la boleta no necesita esto porque ya se limpia sola al entrar a un resumen (ver
+`app/resumenes.py`). Sin este mantenimiento, con volumen alto (del orden de 10
+mil comprobantes/mes por empresa) `DATA/` crece sin límite.
+
+Dos pasos, contados en días desde que SUNAT aceptó cada documento:
+1. A los **7 días**: empaqueta esos archivos en un `.tar.gz` dentro de
+   `<ruta_base>/archivo_frio/` (local, sin subir a ningún lado — quien emite
+   los comprobantes ya los guarda en su propia base) y borra los originales.
+2. A los **8 días más** en `archivo_frio/` (≈15 días desde el cierre), borra el
+   `.tar.gz` definitivamente.
+
+La fila en `DOCUMENTO` de SFS **nunca se borra**: `GET /comprobantes/{codigo}`
+sigue devolviendo el estado aunque `cdr_xml` ya dé `null` por no quedar
+archivo. Correrlo una vez al día por cron en el servidor:
+
+```bash
+# crontab -e (usuario ubuntu)
+0 3 * * * cd /home/ubuntu/facturador-api && .venv/bin/python3 deploy/mantenimiento_diario.py >> /home/ubuntu/config/mantenimiento.log 2>&1
+```
