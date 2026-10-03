@@ -79,9 +79,14 @@ Variable de entorno opcional: `FACTURADOR_API_EMPRESAS_YAML` para apuntar a un
 ## Despliegue
 
 Ver [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml): cada push a
-`main` hace SSH al servidor y corre `deploy/actualizar.sh` (pull + reinstalar
-dependencias si cambiaron + `pm2 restart facturador-api`). Requiere los secrets
-de repo `SSH_HOST`, `SSH_USER` y `SSH_KEY` (ver sección de configuración abajo).
+`main` corre las pruebas y, si pasan, hace SSH al servidor y corre `git fetch &&
+git reset --hard origin/main && pip install -r requirements.txt && pm2 restart
+facturador-api`. Requiere los secrets de repo `SSH_HOST`, `SSH_USER` y `SSH_KEY`
+(ver sección de configuración abajo).
+
+**Producción actual:** `https://facturador.peru-hub.com` (Caddy gestiona el
+certificado TLS solo, vía `/etc/caddy/Caddyfile` en el servidor — no vive en este
+repo porque es configuración del servidor, no de la app).
 
 ### Configurar el despliegue automático (una sola vez)
 
@@ -101,22 +106,36 @@ de repo `SSH_HOST`, `SSH_USER` y `SSH_KEY` (ver sección de configuración abajo
      conectarte por SSH/SCP hoy).
 3. Listo — el próximo push a `main` dispara el despliegue solo.
 
-## Dar de alta una empresa (manual por ahora)
+## Dar de alta una empresa
 
-1. Crear la estructura de carpetas bajo una `ruta_base` nueva (igual a la de la
-   primera instalación: `sunat_archivos/sfs/{DATA,RPTA/{procesados,errores},CERT,
-   VALI,ALMCERT,ENVIO,FORM,ORIDAT,PARSE,REPO,TEMP,FIRMA}`, `bd/`).
-2. Copiar `VALI/` completa desde una instalación existente (plantillas FTL,
-   `commons/`, reportes `.jasper` — son genéricas, no tienen nada de la empresa).
-3. Copiar el `.p12` de esa empresa a `CERT/`.
-4. Armar un `BDFacturador.db` con el esquema (`PARAMETRO`/`DOCUMENTO`/`ERROR`) pero
-   sin datos de otra empresa — hoy se copia uno existente y se actualiza
-   `RUTSOL`/`NUMRUC`/`NOMCERT`/etc. a mano por SQL.
-5. Agregar la entrada a `empresas.yaml` (RUC, puerto, ruta_base).
-6. Agregar la instancia de SFS al `ecosystem.config.js` de PM2, con su propio
-   `prod.yaml` (puerto distinto) y `cwd`.
-7. Levantar esa instancia de SFS y, por un túnel SSH a su puerto, importar el
-   certificado desde su pantalla web (`Importar Certificado`) — esto genera el
-   `ALMCERT/FacturadorKey.jks` interno que SFS necesita para firmar.
+Un solo script (`deploy/alta_empresa.sh`), corrido en el servidor:
 
-**Pendiente:** un script único que automatice los 7 pasos.
+```bash
+cd /home/ubuntu/facturador-api
+./deploy/alta_empresa.sh <ruc> "<razon_social>" <usuario_sol> <clave_sol> <puerto> \
+    <ruta_al_certificado.p12> <clave_certificado> [nombre_carpeta]
+```
+
+Ejemplo:
+```bash
+./deploy/alta_empresa.sh 20123456789 "EMPRESA DOS S.A.C." FACTURA2 miClaveSOL 9001 \
+    /home/ubuntu/subidas/certificado2.p12 miClaveCert empresa2
+```
+
+Hace todo de punta a punta: crea las carpetas (`sunat_archivos/sfs/{DATA,RPTA/...,
+CERT,VALI,ALMCERT,...}`, `bd/`), copia las plantillas `VALI/` genéricas, arma la
+`BDFacturador.db` con el esquema limpio (`deploy/esquema_bd.sql`), genera el
+`ALMCERT/FacturadorKey.jks` con `keytool` (ver el comentario al inicio del script:
+el import por la pantalla web está roto en Linux, esto lo reemplaza), levanta esa
+instancia de SFS con PM2 en el puerto que le des, guarda RUC/usuario
+SOL/ruta de trabajo llamando a `GrabarParametro.htm` (la propia app encripta la
+clave SOL, el script no la toca en texto plano en ningún lado persistente salvo el
+argumento de línea de comandos), y agrega la entrada a `empresas.yaml` —
+`facturador-api` la recoge sola en el próximo request, sin reiniciar nada.
+
+Al final te deja un `curl` de ejemplo para probar con una factura de prueba antes
+de usarla con datos reales — hazlo siempre primero, como con la primera empresa.
+
+**Puertos:** cada empresa necesita un puerto único (y automáticamente un puerto de
+administración de Dropwizard único también, `puerto + 9081`) — lleva la cuenta de
+cuáles ya están en uso en `empresas.yaml`.

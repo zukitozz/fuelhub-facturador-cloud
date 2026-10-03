@@ -1,0 +1,33 @@
+-- Esquema (sin datos) de BDFacturador.db — extraído con `sqlite3 BDFacturador.db .schema`
+-- de una instalación real de SFS. PARAMETRO y DOCUMENTO quedan vacías (las llena la
+-- propia app: PARAMETRO vía /api/GrabarParametro.htm, DOCUMENTO al procesar comprobantes).
+-- ERROR es un catálogo genérico de SUNAT (igual para toda empresa) — alta_empresa.sh
+-- copia sus filas desde una instalación existente después de crear estas tablas.
+CREATE TABLE IF NOT EXISTS "PARAMETRO"(
+   ID_PARA   VARCHAR(10) NOT NULL,
+   COD_PARA  VARCHAR(10) NOT NULL,
+   NOM_PARA  VARCHAR(30) NOT NULL,
+   TIP_PARA  VARCHAR(10) NOT NULL,
+   VAL_PARA  VARCHAR(20) NOT NULL,
+   IND_ESTA_PARA CHAR(2) NOT NULL,
+   CONSTRAINT PK_TXXXX_PARAM PRIMARY KEY(ID_PARA, COD_PARA)
+);
+CREATE TABLE IF NOT EXISTS "DOCUMENTO"(
+   NUM_RUC  VARCHAR(11) NOT NULL,
+   TIP_DOCU CHAR(2) NOT NULL,
+   NUM_DOCU VARCHAR(60) NOT NULL,
+   FEC_CARG DATETIME,
+   FEC_GENE DATETIME,
+   FEC_ENVI DATETIME,
+   DES_OBSE VARCHAR(250),
+   NOM_ARCH VARCHAR(250),
+   IND_SITU CHAR(2),
+   TIP_ARCH CHAR(6),
+   FIRM_DIGITAL VARCHAR(250), NUM_TICKET VARCHAR(250),
+   CONSTRAINT PK_BANDEJA_FACTURADOR PRIMARY KEY (NUM_RUC, TIP_DOCU, NUM_DOCU)
+);
+CREATE TABLE IF NOT EXISTS "ERROR"(
+   COD_CATAERRO VARCHAR(4) PRIMARY KEY NOT NULL,
+   NOM_CATAERRO VARCHAR(120) NOT NULL,
+   IND_ESTADO VARCHAR(1) NOT NULL
+);
