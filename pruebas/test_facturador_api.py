@@ -83,7 +83,9 @@ r = client.post(f"/empresas/{RUC}/comprobantes", json={
 })
 print("3. Factura válida ->", r.status_code, r.json())
 assert r.status_code == 201
-assert r.json() == {"codigo": "01-F002-000002", "ind_situ": "11", "des_obse": "-"}
+# hash/qr quedan None acá: "11" ya cuenta como firmado, pero no existe ningún
+# XML real en FIRMA/ en esta prueba (se cubre aparte en 3c, con un XML de verdad).
+assert r.json() == {"codigo": "01-F002-000002", "estado": "aceptado", "des_obse": "-", "hash": None, "qr": None}
 
 archivos_escritos = sorted(os.listdir(data_dir))
 print("   archivos en DATA:", archivos_escritos)
@@ -108,7 +110,40 @@ r = client.post(f"/empresas/{RUC}/comprobantes", json={
 })
 print("3b. Boleta -> solo generar(), nunca enviar ->", r.status_code, r.json())
 assert r.status_code == 201
-assert r.json() == {"codigo": "03-B001-000001", "ind_situ": "02", "des_obse": "-"}
+assert r.json() == {"codigo": "03-B001-000001", "estado": "generado", "des_obse": "-", "hash": None, "qr": None}
+
+# 3c) hash/qr SÍ se arman cuando ya existe un XML real en FIRMA/ (como lo deja
+# SFS de verdad al firmar) — acá no se mockea nada de lectura de archivos, se
+# prueba la extracción real del DigestValue y el armado del QR de 10 campos.
+firma_dir = os.path.join(base, "sunat_archivos", "sfs", "FIRMA")
+os.makedirs(firma_dir, exist_ok=True)
+with open(os.path.join(firma_dir, f"{RUC}-01-F002-000099.xml"), "w", encoding="utf-8") as fh:
+    fh.write(
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<Invoice xmlns:ds="http://www.w3.org/2000/09/xmldsig#">'
+        '<ds:Signature><ds:SignedInfo><ds:Reference>'
+        '<ds:DigestValue>HASHDEPRUEBA==</ds:DigestValue>'
+        '</ds:Reference></ds:SignedInfo></ds:Signature>'
+        '</Invoice>'
+    )
+sfs_cliente.generar_y_enviar = lambda base_url, ruc, tipo, numero: {"ind_situ": "11", "des_obse": "-"}
+r = client.post(f"/empresas/{RUC}/comprobantes", json={
+    "numeracion_comprobante": "F002-000099",
+    "tipo_comprobante": "FACTURA",
+    "fecha_emision": "2026-10-05T10:00:00",
+    "total": 118.00,
+    "gravadas": 100.00,
+    "igv": 18.00,
+    "receptor": {"tipo_documento": "6", "numero_documento": "20123456789", "razon_social": "CLIENTE S.A.C."},
+    "items": [{"descripcion": "ITEM", "cantidad": 1,
+               "valor": 100.0, "valor_venta": 100.0, "igv_venta": 18.0, "precio": 118.0}],
+})
+print("3c. Con XML firmado real -> hash/qr ->", r.status_code, r.json())
+assert r.status_code == 201
+cuerpo_3c = r.json()
+assert cuerpo_3c["estado"] == "aceptado"
+assert cuerpo_3c["hash"] == "HASHDEPRUEBA=="
+assert cuerpo_3c["qr"] == f"{RUC}|01|F002|000099|18.00|118.00|2026-10-05|6|20123456789|HASHDEPRUEBA=="
 
 # 4) Consultar antes de que exista CDR: ind_situ sin CDR todavía.
 with sqlite3.connect(os.path.join(bd_dir, "BDFacturador.db")) as conn:
@@ -181,7 +216,7 @@ print("6. Resumen diario ->", r.status_code, r.json())
 assert r.status_code == 200
 cuerpo = r.json()
 assert cuerpo["cantidad_boletas"] == 1
-assert cuerpo["ind_situ"] == "11"
+assert cuerpo["estado"] == "aceptado"
 assert llamado_con["tipo"] == "RC"
 assert cuerpo["numeracion_rc"] == llamado_con["numero"]
 assert cuerpo["numeracion_rc"].startswith("RC-")

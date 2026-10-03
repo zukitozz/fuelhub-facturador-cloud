@@ -71,13 +71,15 @@ class ComprobanteEntrada(BaseModel):
 
 class ComprobanteAceptado(BaseModel):
     codigo: str = Field(..., description="tipo-numeracion, usar en GET /comprobantes/{codigo}")
-    ind_situ: str
+    estado: str = Field(..., description="pendiente/generado/aceptado/aceptado_con_observaciones/rechazado/error/anulado/validando/enviado — ver app/estados.py")
     des_obse: str
+    hash: Optional[str] = Field(None, description="DigestValue del XML firmado; null si todavía no se firmó")
+    qr: Optional[str] = Field(None, description="Los 10 campos del QR de SUNAT, separados por '|'; null si todavía no se firmó")
 
 
 class EstadoComprobante(BaseModel):
     codigo: str
-    ind_situ: str
+    estado: str
     des_obse: str
     fec_gene: Optional[str] = None
     fec_envi: Optional[str] = None

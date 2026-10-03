@@ -47,6 +47,12 @@ class Empresa:
         return os.path.join(self.ruta_base, "sunat_archivos", "sfs", "DATA")
 
     @property
+    def firma_dir(self) -> str:
+        """Donde SFS deja el XML ya firmado de cada documento — de ahí sale el
+        hash para el QR (ver app/qr.py)."""
+        return os.path.join(self.ruta_base, "sunat_archivos", "sfs", "FIRMA")
+
+    @property
     def rpta_dir(self) -> str:
         return os.path.join(self.ruta_base, "sunat_archivos", "sfs", "RPTA")
 

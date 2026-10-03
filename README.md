@@ -35,7 +35,7 @@ DATA → generar y firmar XML → enviar a SUNAT). Para factura/nota, SUNAT resp
 en la misma llamada.
 
 **Excepción: la boleta (`tipo_comprobante: "BOLETA"`) nunca se envía sola.**
-Queda generada/firmada y a la espera (`ind_situ: "02"`) hasta que el resumen
+Queda generada/firmada y a la espera (`estado: "generado"`) hasta que el resumen
 diario la incluya — ver `POST /empresas/{ruc}/resumenes-diarios` más abajo. Esto
 replica el comportamiento del daemon original
 (`aplicacion/ciclo_generacion.py:332` de fuelhub-facturador: "Las boletas no
@@ -53,14 +53,30 @@ curl -X POST http://localhost:8000/empresas/20609785269/comprobantes \
     "fecha_emision": "2026-10-02T10:00:00",
     "total": 1.00,
     "monto_letras": "UN CON 00/100 SOLES",
-    "receptor": {"razon_social": "CLIENTE DE PRUEBA"},
+    "receptor": {"tipo_documento": "6", "numero_documento": "20123456789", "razon_social": "CLIENTE DE PRUEBA"},
     "items": [
       {"descripcion": "ITEM DE PRUEBA", "cantidad": 1,
        "valor": 0.847458, "valor_venta": 0.85, "igv_venta": 0.15, "precio": 1.00}
     ]
   }'
-# -> {"codigo": "01-F002-000002", "ind_situ": "11", "des_obse": "-"}
+# -> {
+#      "codigo": "01-F002-000002",
+#      "estado": "aceptado",
+#      "des_obse": "-",
+#      "hash": "fQpBhxCjB5Y3pj/1xZIpjYkN1dM=",
+#      "qr": "20609785269|01|F002|000002|0.15|1.00|2026-10-02|6|20123456789|fQpBhxCjB5Y3pj/1xZIpjYkN1dM="
+#    }
 ```
+
+`estado` traduce el código interno de SFS a un vocabulario simple — ver
+[app/estados.py](app/estados.py) para el mapeo completo (`pendiente`,
+`generado`, `aceptado`, `aceptado_con_observaciones`, `rechazado`, `error`,
+`anulado`, `validando`, `enviado`). `hash`/`qr` solo se completan una vez que
+SFS firmó el documento (`estado` ya no es `pendiente`/`error`) — el `hash` es
+el `DigestValue` de la firma XML-DSig, extraído del XML real que SFS dejó en
+`FIRMA/`; `qr` son los 10 campos del QR oficial de SUNAT ya armados y
+separados por `|`, listos para codificar (ver [app/qr.py](app/qr.py) — SFS no
+arma ese string solo, confirmado inspeccionando un XML real).
 
 ### `GET /empresas/{ruc}/comprobantes/{codigo}`
 
@@ -82,7 +98,7 @@ boletas pendientes solo responde que no hay nada que resumir.
 
 ```bash
 curl -X POST http://localhost:8000/empresas/20609785269/resumenes-diarios
-# -> {"numeracion_rc": "RC-20261003-001", "cantidad_boletas": 7, "ind_situ": "11", "des_obse": "-"}
+# -> {"numeracion_rc": "RC-20261003-001", "cantidad_boletas": 7, "estado": "aceptado", "des_obse": "-"}
 # o, sin pendientes:
 # -> {"mensaje": "No hay boletas de días anteriores pendientes de resumir."}
 ```

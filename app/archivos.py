@@ -51,11 +51,14 @@ def _borrar_si_existe(ruta: str):
         pass
 
 
-def escribir_comprobante(comp: ComprobanteEntrada, ruc_emisor: str, data_dir: str) -> str:
+def escribir_comprobante(comp: ComprobanteEntrada, ruc_emisor: str, data_dir: str) -> dict:
     """
-    Escribe los 5 archivos en data_dir. Devuelve el "nombre base"
-    (<ruc>-<tipo>-<serie>-<correlativo>) que SFS usa como NOM_ARCH — es justo lo
-    que necesitamos para después consultar su estado por sfs_cliente/consultas.
+    Escribe los 5 archivos en data_dir. Devuelve {"base", "igv", "total"}:
+    - "base" (<ruc>-<tipo>-<serie>-<correlativo>) es el NOM_ARCH que usa SFS —
+      para después consultar su estado por sfs_cliente/consultas.
+    - "igv"/"total" son los montos que de verdad quedaron escritos (si no
+      vinieron en el request, se calculan acá) — el caller los necesita tal
+      cual para armar el QR (ver app/qr.py), que debe coincidir con lo firmado.
     """
     tipo_comp = comp.tipo_comprobante  # ya normalizado a código por el validator
     num_comp = comp.numeracion_comprobante
@@ -127,7 +130,7 @@ def escribir_comprobante(comp: ComprobanteEntrada, ruc_emisor: str, data_dir: st
     lineas_det = [_linea_detalle(item.model_dump()) for item in comp.items]
     _escribir_archivo(rutas["DET"], "".join(lineas_det))
 
-    return base
+    return {"base": base, "igv": float(tot_igv), "total": float(tot_venta)}
 
 
 def leer_cabecera_boleta(data_dir: str, ruc_emisor: str, numero: str) -> dict | None:

@@ -28,7 +28,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from dominio.resumen_diario import _linea_rdi, _linea_trd
 
-from . import archivos, consultas, sfs_cliente
+from . import archivos, consultas, estados, sfs_cliente
 
 # Perú no tiene horario de verano: un offset fijo alcanza, sin depender de qué
 # zona horaria tenga configurado el sistema operativo del servidor (suele venir
@@ -108,6 +108,6 @@ def armar_y_enviar_resumen(empresa, ruc: str) -> dict:
     return {
         "numeracion_rc": numeracion_rc,
         "cantidad_boletas": len(boletas),
-        "ind_situ": fila.get("ind_situ", ""),
+        "estado": estados.legible(fila.get("ind_situ", "")),
         "des_obse": fila.get("des_obse", ""),
     }
