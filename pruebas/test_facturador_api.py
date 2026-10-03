@@ -138,4 +138,73 @@ print("5. Estado con CDR ->", r.status_code, r.json())
 assert r.status_code == 200
 assert "ACEPTADO" in r.json()["cdr_xml"]
 
+# 6) Resumen diario: una boleta de AYER, generada pero nunca enviada sola (como
+# haría de verdad sfs_cliente.generar), debe entrar al resumen. Se mockea
+# sfs_cliente.generar (para escribir el .CAB real sin tocar red) y luego
+# generar_y_enviar (para el envío del propio RC).
+#
+# "Ayer" se calcula con la MISMA hora de Lima fija que usa app.resumenes, no con
+# la hora local de la máquina que corre la prueba — si no, un CI corriendo ya
+# "mañana" en su propia zona horaria podría ver esta fecha como "hoy" en Lima y
+# la boleta quedaría excluida por error.
+import datetime as _dt
+from app.resumenes import _LIMA
+ayer = (_dt.datetime.now(_LIMA) - _dt.timedelta(days=1)).strftime("%Y-%m-%dT10:00:00")
+
+sfs_cliente.generar = lambda base_url, ruc, tipo, numero: {"ind_situ": "02", "des_obse": "-"}
+r = client.post(f"/empresas/{RUC}/comprobantes", json={
+    "numeracion_comprobante": "B001-000050",
+    "tipo_comprobante": "BOLETA",
+    "fecha_emision": ayer,
+    "total": 1.00,
+    "items": [{"descripcion": "ITEM", "cantidad": 1,
+               "valor": 0.847458, "valor_venta": 0.85, "igv_venta": 0.15, "precio": 1.00}],
+})
+assert r.status_code == 201, r.json()
+# Simula lo que de verdad haría SFS al generarla: registrarla en DOCUMENTO.
+with sqlite3.connect(os.path.join(bd_dir, "BDFacturador.db")) as conn:
+    conn.execute(
+        "INSERT INTO DOCUMENTO VALUES (?,?,?,?,?,?,?,?,?)",
+        (RUC, "03", "B001-000050", f"{RUC}-03-B001-000050", "02", "-",
+         "02/10/2026 10:00:00", None, None),
+    )
+
+llamado_con = {}
+def _generar_y_enviar_rc(base_url, ruc, tipo, numero):
+    llamado_con["tipo"] = tipo
+    llamado_con["numero"] = numero
+    return {"ind_situ": "11", "des_obse": "-"}
+sfs_cliente.generar_y_enviar = _generar_y_enviar_rc
+
+r = client.post(f"/empresas/{RUC}/resumenes-diarios")
+print("6. Resumen diario ->", r.status_code, r.json())
+assert r.status_code == 200
+cuerpo = r.json()
+assert cuerpo["cantidad_boletas"] == 1
+assert cuerpo["ind_situ"] == "11"
+assert llamado_con["tipo"] == "RC"
+assert cuerpo["numeracion_rc"] == llamado_con["numero"]
+assert cuerpo["numeracion_rc"].startswith("RC-")
+
+# El .RDI/.TRD del resumen deben existir, y los archivos de la boleta ya
+# consumida deben haber desaparecido (se "gastó" dentro del resumen).
+archivos_tras_resumen = sorted(os.listdir(data_dir))
+print("   archivos en DATA tras el resumen:", archivos_tras_resumen)
+assert any(n.endswith(".RDI") for n in archivos_tras_resumen)
+assert any(n.endswith(".TRD") for n in archivos_tras_resumen)
+assert not any("B001-000050" in n for n in archivos_tras_resumen), "la boleta consumida debió borrarse"
+
+with sqlite3.connect(os.path.join(bd_dir, "BDFacturador.db")) as conn:
+    fila = conn.execute(
+        "SELECT 1 FROM DOCUMENTO WHERE NUM_RUC=? AND TIP_DOCU='03' AND NUM_DOCU='B001-000050'",
+        (RUC,),
+    ).fetchone()
+assert fila is None, "la fila de la boleta consumida debió borrarse de DOCUMENTO"
+
+# 7) Sin boletas pendientes (ya se consumió la única), no debe armar nada.
+r = client.post(f"/empresas/{RUC}/resumenes-diarios")
+print("7. Resumen sin pendientes ->", r.status_code, r.json())
+assert r.status_code == 200
+assert "mensaje" in r.json()
+
 print("\nTODO OK")

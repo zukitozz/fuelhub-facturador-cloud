@@ -31,8 +31,18 @@ PM2 en el servidor:
 
 Body: ver [app/esquemas.py](app/esquemas.py):`ComprobanteEntrada`. Escribe los 5
 archivos en `DATA` de esa empresa y dispara la secuencia completa de SFS (releer
-DATA → generar y firmar XML → enviar a SUNAT). Para factura/boleta/nota, SUNAT
-responde en la misma llamada.
+DATA → generar y firmar XML → enviar a SUNAT). Para factura/nota, SUNAT responde
+en la misma llamada.
+
+**Excepción: la boleta (`tipo_comprobante: "BOLETA"`) nunca se envía sola.**
+Queda generada/firmada y a la espera (`ind_situ: "02"`) hasta que el resumen
+diario la incluya — ver `POST /empresas/{ruc}/resumenes-diarios` más abajo. Esto
+replica el comportamiento del daemon original
+(`aplicacion/ciclo_generacion.py:332` de fuelhub-facturador: "Las boletas no
+entran al loop de arriba... se agrupan en un resumen diario"); enviarla
+individual sería una declaración fuera del proceso normal — pasó de verdad una
+vez durante la migración, antes de que se corrigiera (ver
+`app/sfs_cliente.py:TIPOS_SIN_ENVIO_INDIVIDUAL`).
 
 ```bash
 curl -X POST http://localhost:8000/empresas/20609785269/comprobantes \
@@ -60,6 +70,30 @@ actual y, si ya está disponible, el XML del CDR como texto plano.
 ```bash
 curl http://localhost:8000/empresas/20609785269/comprobantes/01-F002-000002
 ```
+
+### `POST /empresas/{ruc}/resumenes-diarios`
+
+Arma y envía el resumen diario (tipo `RC`) con las boletas de **días anteriores**
+que quedaron generadas y a la espera (las de hoy se dejan para el próximo
+llamado — un resumen a medio día se presta a que lleguen más boletas después y
+queden fuera, mismo criterio que el daemon original). Pensado para dispararse
+una vez al día (cron externo, o a mano); llamarlo de más no hace daño, sin
+boletas pendientes solo responde que no hay nada que resumir.
+
+```bash
+curl -X POST http://localhost:8000/empresas/20609785269/resumenes-diarios
+# -> {"numeracion_rc": "RC-20261003-001", "cantidad_boletas": 7, "ind_situ": "11", "des_obse": "-"}
+# o, sin pendientes:
+# -> {"mensaje": "No hay boletas de días anteriores pendientes de resumir."}
+```
+
+Sin base de datos propia, igual que el resto: qué boletas están pendientes sale
+de la propia bandeja de SFS, y el detalle de cada una (fecha, receptor, montos)
+se relee del `.CAB` que ya quedó en `DATA` al generarla — ver
+[app/resumenes.py](app/resumenes.py) para las simplificaciones conscientes
+respecto del mecanismo completo del daemon original (no hay recuperación de CDR
+por ticket todavía; para eso, reconsultar `GET .../comprobantes/RC-{código}` a
+mano mientras no exista ese mecanismo).
 
 Documentación interactiva (Swagger) en `http://localhost:8000/docs` una vez
 levantado el servicio.

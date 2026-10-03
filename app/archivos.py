@@ -128,3 +128,55 @@ def escribir_comprobante(comp: ComprobanteEntrada, ruc_emisor: str, data_dir: st
     _escribir_archivo(rutas["DET"], "".join(lineas_det))
 
     return base
+
+
+def leer_cabecera_boleta(data_dir: str, ruc_emisor: str, numero: str) -> dict | None:
+    """
+    Relee el .CAB que escribir_comprobante() ya dejó para esta boleta, para
+    reconstruir sus datos sin tener una BD propia — los necesita
+    app/resumenes.py para armar la línea del .RDI/.TRD. None si el archivo no
+    está (boleta ya consumida, o nunca existió).
+
+    Columnas del .CAB de una boleta/factura (ver escribir_comprobante, rama no
+    nota): 0101|fecha|hora|-|0000|tipoDocRec|numDocRec|razonSocial|moneda|
+    igv|grav|total|0.00|0.00|0.00|total|2.1|2.0|
+    """
+    base = _nombre_base(ruc_emisor, "03", numero)
+    ruta = os.path.join(data_dir, f"{base}.CAB")
+    try:
+        with open(ruta, encoding="utf-8") as fh:
+            campos = fh.readline().rstrip("\n").split("|")
+    except FileNotFoundError:
+        return None
+    if len(campos) < 12:
+        return None
+    return {
+        "numeracion_comprobante": numero,
+        "fecha_emision": campos[1],
+        "receptor": {"tipo_documento": campos[5], "numero_documento": campos[6]},
+        "igv": float(campos[9]),
+        "gravadas": float(campos[10]),
+        "total": float(campos[11]),
+    }
+
+
+def escribir_resumen(data_dir: str, ruc_emisor: str, numeracion_rc: str, lineas_rdi: list, lineas_trd: list) -> str:
+    """Escribe el .RDI/.TRD de un resumen diario. numeracion_rc lleva el prefijo
+    completo ("RC-20261003-001"); el nombre de archivo en DATA va sin él —
+    validarNombreArchivo() del SFS exige exactamente 4 tramos (ruc-tipo-serie-
+    numero), y con el prefijo serían 5 y el SFS lo descarta en silencio."""
+    sin_prefijo = numeracion_rc[3:] if numeracion_rc.startswith("RC-") else numeracion_rc
+    base = _nombre_base(ruc_emisor, "RC", sin_prefijo)
+    os.makedirs(data_dir, exist_ok=True)
+    _escribir_archivo(os.path.join(data_dir, f"{base}.RDI"), "".join(lineas_rdi))
+    _escribir_archivo(os.path.join(data_dir, f"{base}.TRD"), "".join(lineas_trd))
+    return base
+
+
+def limpiar_boleta(data_dir: str, ruc_emisor: str, numero: str):
+    """Borra los archivos de una boleta ya incluida y enviada dentro de un
+    resumen — queda 'consumida', igual que _limpiar_data_cerrados() del daemon
+    hace con cualquier documento ya cerrado."""
+    base = _nombre_base(ruc_emisor, "03", numero)
+    for ext in ("CAB", "DET", "TRI", "LEY"):
+        _borrar_si_existe(os.path.join(data_dir, f"{base}.{ext}"))

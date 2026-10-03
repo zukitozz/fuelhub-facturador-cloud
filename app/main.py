@@ -10,7 +10,7 @@ import logging
 
 from fastapi import FastAPI, HTTPException
 
-from . import archivos, configuracion, consultas, sfs_cliente
+from . import archivos, configuracion, consultas, resumenes, sfs_cliente
 from .esquemas import ComprobanteAceptado, ComprobanteEntrada, EstadoComprobante
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -99,3 +99,23 @@ def consultar_comprobante(ruc: str, codigo: str):
         )
 
     return EstadoComprobante(codigo=codigo, cdr_xml=cdr_xml, **estado)
+
+
+@app.post("/empresas/{ruc}/resumenes-diarios")
+def crear_resumen_diario(ruc: str):
+    """
+    Arma y envía el resumen diario (RC) con las boletas de días anteriores que
+    quedaron generadas y a la espera (ver sfs_cliente.TIPOS_SIN_ENVIO_INDIVIDUAL).
+    Pensado para dispararse una vez al día (cron, o a mano) — no hace nada malo
+    si se llama de más: sin boletas pendientes, responde sin crear un RC vacío.
+    """
+    empresa = _empresa_o_404(ruc)
+    try:
+        return resumenes.armar_y_enviar_resumen(empresa, ruc)
+    except resumenes.SinPendientes:
+        return {"mensaje": "No hay boletas de días anteriores pendientes de resumir."}
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    except sfs_cliente.SfsError as e:
+        logger.error("SFS no disponible armando resumen para %s: %s", ruc, e)
+        raise HTTPException(status_code=502, detail=f"SFS no disponible: {e}") from e
