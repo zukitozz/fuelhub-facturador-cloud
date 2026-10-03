@@ -57,16 +57,14 @@ def sincronizar_bandeja(base_url: str) -> bool:
     return r.get("validacion") == "EXITO"
 
 
-def generar_y_enviar(base_url: str, ruc: str, tipo: str, numero: str) -> dict:
+def generar(base_url: str, ruc: str, tipo: str, numero: str) -> dict:
     """
-    Corre la secuencia completa: sincronizar -> generar (firma) -> enviar a SUNAT.
-    Devuelve la fila de DOCUMENTO tal como la reporta SFS en su última respuesta
-    (ind_situ, des_obse, fec_gene, fec_envi, num_ticket).
+    Sincroniza y genera (firma) el XML, SIN enviarlo a SUNAT. Devuelve la fila de
+    DOCUMENTO tal como la reporta SFS (ind_situ, des_obse, fec_gene, ...).
 
-    Para factura/boleta/nota, enviarXML.htm es síncrono: SUNAT responde en la misma
-    llamada (confirmado en la migración: ind_situ pasó directo a '11' - CDR
-    descargado - en el mismo request). El resumen diario (tipo "RC") es la
-    excepción asíncrona por ticket, y no se arma desde acá (ver esquemas.py).
+    Es el único paso válido para una BOLETA: ver TIPOS_SIN_ENVIO_INDIVIDUAL más
+    abajo para el porqué. El documento queda firmado y a la espera en la bandeja
+    de SFS (ind_situ='02') hasta que el resumen diario lo incluya.
     """
     payload = {"num_ruc": ruc, "tip_docu": tipo, "num_docu": numero}
 
@@ -86,10 +84,34 @@ def generar_y_enviar(base_url: str, ruc: str, tipo: str, numero: str) -> dict:
         r = _post(base_url, "api/GenerarComprobante.htm", payload)
         fila = _fila_documento(r, ruc, tipo, numero) or fila
 
+    return fila
+
+
+def generar_y_enviar(base_url: str, ruc: str, tipo: str, numero: str) -> dict:
+    """
+    generar() + enviar a SUNAT. NO usar para tipo="03" (boleta) — ver
+    TIPOS_SIN_ENVIO_INDIVIDUAL: el daemon original (aplicacion/ciclo_generacion.py,
+    comentario "Las boletas no entran al loop de arriba... se agrupan acá en un
+    resumen diario") nunca envía una boleta suelta, siempre agrupada en el
+    resumen del día — es ese resumen (tipo "RC"), no la boleta, el que pasa por
+    enviarXML.htm. main.py hace cumplir esto antes de llamar acá.
+
+    Para factura/nota, enviarXML.htm es síncrono: SUNAT responde en la misma
+    llamada (confirmado en la migración: ind_situ pasó directo a '11' - CDR
+    descargado - en el mismo request).
+    """
+    fila = generar(base_url, ruc, tipo, numero)
     if fila.get("ind_situ") != "02":
         # No llegó a "XML generado": no tiene sentido pedirle a SFS que envíe algo
         # que no firmó. des_obse ya trae el motivo (p.ej. "Error al firma archivo XML").
         return fila
 
+    payload = {"num_ruc": ruc, "tip_docu": tipo, "num_docu": numero}
     r = _post(base_url, "api/enviarXML.htm", payload)
     return _fila_documento(r, ruc, tipo, numero) or fila
+
+
+# Tipos que SUNAT/el sistema no declara de forma individual — ver docstring de
+# generar_y_enviar. Hoy solo la boleta; el resumen diario (RC) todavía no se
+# arma desde facturador-api (pendiente, ver memoria de la migración).
+TIPOS_SIN_ENVIO_INDIVIDUAL = {"03"}

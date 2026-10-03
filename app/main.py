@@ -54,7 +54,15 @@ def crear_comprobante(ruc: str, comprobante: ComprobanteEntrada):
     codigo = f"{tipo}-{numero}"
 
     try:
-        fila = sfs_cliente.generar_y_enviar(empresa.sfs_base_url, ruc, tipo, numero)
+        if tipo in sfs_cliente.TIPOS_SIN_ENVIO_INDIVIDUAL:
+            # Boleta: se genera/firma y se deja en la bandeja de SFS, pero NO se
+            # envía sola — ver sfs_cliente.generar_y_enviar para el porqué. Falta
+            # el endpoint que arme y envíe el resumen diario (pendiente, ver
+            # memoria de la migración); mientras tanto esta boleta queda
+            # correctamente a la espera, no mal enviada.
+            fila = sfs_cliente.generar(empresa.sfs_base_url, ruc, tipo, numero)
+        else:
+            fila = sfs_cliente.generar_y_enviar(empresa.sfs_base_url, ruc, tipo, numero)
     except sfs_cliente.SfsError as e:
         logger.error("SFS no disponible para %s (%s): %s", ruc, base, e)
         # 502: el comprobante YA quedó escrito en DATA (ver 'base' arriba) — un

@@ -90,6 +90,26 @@ print("   archivos en DATA:", archivos_escritos)
 esperado = sorted(f"{RUC}-01-F002-000002.{e}" for e in ("CAB", "DET", "TRI", "LEY", "PAG"))
 assert archivos_escritos == esperado, "extensiones deben quedar en MAYÚSCULAS (el bug de Linux)"
 
+# 3b) Boleta: NUNCA se envía sola a SUNAT (se agrupa en el resumen diario — ver
+# dominio/resumen_diario.py y el comentario de ciclo_generacion.py del daemon
+# original). Si esto llama a generar_y_enviar en vez de generar(), es el mismo
+# error real que se mandó por accidente la primera vez con una empresa real.
+sfs_cliente.generar_y_enviar = lambda base_url, ruc, tipo, numero: (_ for _ in ()).throw(
+    AssertionError("una BOLETA no debe pasar por generar_y_enviar (se enviaría sola a SUNAT)")
+)
+sfs_cliente.generar = lambda base_url, ruc, tipo, numero: {"ind_situ": "02", "des_obse": "-"}
+r = client.post(f"/empresas/{RUC}/comprobantes", json={
+    "numeracion_comprobante": "B001-000001",
+    "tipo_comprobante": "BOLETA",
+    "fecha_emision": "2026-10-02T10:00:00",
+    "total": 1.00,
+    "items": [{"descripcion": "ITEM", "cantidad": 1,
+               "valor": 0.847458, "valor_venta": 0.85, "igv_venta": 0.15, "precio": 1.00}],
+})
+print("3b. Boleta -> solo generar(), nunca enviar ->", r.status_code, r.json())
+assert r.status_code == 201
+assert r.json() == {"codigo": "03-B001-000001", "ind_situ": "02", "des_obse": "-"}
+
 # 4) Consultar antes de que exista CDR: ind_situ sin CDR todavía.
 with sqlite3.connect(os.path.join(bd_dir, "BDFacturador.db")) as conn:
     conn.execute(

@@ -3,48 +3,54 @@
 # cero (carpetas, certificado, base, configuración) y la agrega a empresas.yaml de
 # facturador-api. Corre en el mismo servidor donde ya vive la primera empresa.
 #
-# Automatiza los 7 pasos manuales que costó descubrir migrando la primera empresa
-# (ver memoria de la migración / README de este repo). Dos de esos pasos tenían
-# trampas reales que casi obligan a hacerlos a mano, y las resolvimos leyendo el
-# bytecode del jar de SFS (decompilado con CFR) en vez de adivinar:
+# Automatiza los pasos manuales que costó descubrir dando de alta las dos primeras
+# empresas (ver memoria de la migración / README de este repo). Varios de esos
+# pasos tenían trampas reales que casi obligan a hacerlos a mano, y se resolvieron
+# leyendo el bytecode del jar de SFS (decompilado con CFR) en vez de adivinar:
 #
-#   - El certificado NO se importa llamando a la pantalla web (ese endpoint está
-#     roto en Linux: devuelve EXITO pero nunca genera el .jks). Se genera acá
-#     directo con `keytool -importkeystore`, usando el alias y la contraseña
-#     fijos que el propio código del jar usa para TODAS las empresas
-#     (certContribuyente / SuN@TF4CT) — no son la contraseña real del .p12, son
-#     constantes hardcodeadas del vendor. Confirmado funcionando end-to-end
-#     (firma real contra SUNAT producción) el 2026-10-02.
-#   - RUC/usuario SOL/clave SOL/ruta de trabajo SÍ se guardan llamando al
-#     endpoint real (POST /api/GrabarParametro.htm) en vez de tocar la tabla
-#     PARAMETRO por SQL: la clave SOL se guarda encriptada con un método propio
-#     del jar (generarDocumentosService.Encriptar) que no tiene sentido
-#     reimplementar — se deja que la propia app la encripte.
+#   - El certificado NO se importa llamando a la pantalla web tal cual: ese
+#     endpoint (/api/ImportarCertificado.htm) ejecuta su propio `keytool` para
+#     armar el .jks y en Linux no siempre lo logra bien — pero SÍ hace falta
+#     llamarlo, porque es el único lugar que registra PRKCRT/NOMCERT en
+#     PARAMETRO (sin eso SFS rechaza todo con "Debe importar su certificado
+#     digital", así se haya firmado bien). Por eso el .jks se genera DOS veces:
+#     una antes de levantar SFS (para tener algo válido desde el arranque) y
+#     otra vez después de llamar a ImportarCertificado.htm (por si su keytool
+#     interno lo corrompió). El alias/contraseña del .jks final son fijos y
+#     iguales para TODA empresa (certContribuyente / SuN@TF4CT) — no son la
+#     contraseña real del .p12, son constantes hardcodeadas del vendor.
+#     Confirmado firmando contra SUNAT producción el 2026-10-02.
+#   - RUC/usuario SOL/clave SOL/ruta de trabajo se guardan llamando al endpoint
+#     real (POST /api/GrabarParametro.htm): la clave SOL se guarda encriptada
+#     con un método propio del jar (generarDocumentosService.Encriptar) que no
+#     tiene sentido reimplementar.
+#   - Nombre comercial/UBIGEO/dirección se guardan con OTRO endpoint aparte
+#     (POST /api/GrabarOtrosParametros.htm) que GrabarParametro.htm NO toca.
+#     Sin esto, SFS rechaza todo con "Debe ingresar el parámetro de nombre
+#     completo..." aunque el RUC/SOL/certificado ya estén bien. Se descubrió
+#     dando de alta la segunda empresa (Spaxion): la primera (Sircon) nunca lo
+#     notó porque heredó esos campos ya llenos de su base real de producción.
 #
-# Uso:
-#   ./alta_empresa.sh <ruc> <razon_social> <usuario_sol> <clave_sol> <puerto> \
-#                      <ruta_al_certificado.p12> <clave_certificado> [nombre_carpeta]
-#
-# Ejemplo:
-#   ./alta_empresa.sh 20123456789 "EMPRESA DOS S.A.C." FACTURA2 miClaveSOL 9001 \
-#                      /home/ubuntu/subidas/certificado2.p12 miClaveCert empresa2
+# Uso (variables de entorno, no posicionales — son muchas para una lista ordenada):
+#   RUC=20123456789 RAZON_SOCIAL="EMPRESA DOS S.A.C." USUARIO_SOL=FACTURA2 \
+#   CLAVE_SOL=miClaveSOL PUERTO=9001 RUTA_CERT_ORIGEN=/home/ubuntu/subidas/cert.p12 \
+#   CLAVE_CERT=miClaveCert UBIGEO=150101 DIRECCION="AV. EJEMPLO 123" \
+#   DEPARTAMENTO=LIMA PROVINCIA=LIMA DISTRITO=LIMA URBANIZACION="-" \
+#   [NOMBRE_COMERCIAL="EMPRESA DOS"] [CARPETA=empresa2] \
+#   ./deploy/alta_empresa.sh
 set -euo pipefail
 
-if [ "$#" -lt 7 ]; then
-    echo "Uso: $0 <ruc> <razon_social> <usuario_sol> <clave_sol> <puerto> <cert.p12> <clave_cert> [carpeta]" >&2
-    exit 1
-fi
-
-RUC="$1"
-RAZON_SOCIAL="$2"
-USUARIO_SOL="$3"
-CLAVE_SOL="$4"
-PUERTO="$5"
-RUTA_CERT_ORIGEN="$6"
-CLAVE_CERT="$7"
-CARPETA="${8:-empresa-${RUC}}"
-
 # --- Validaciones básicas: fallar temprano y claro, no a mitad del proceso ---
+for var in RUC RAZON_SOCIAL USUARIO_SOL CLAVE_SOL PUERTO RUTA_CERT_ORIGEN CLAVE_CERT \
+           UBIGEO DIRECCION DEPARTAMENTO PROVINCIA DISTRITO URBANIZACION; do
+    if [ -z "${!var:-}" ]; then
+        echo "Error: falta la variable de entorno ${var}. Ver el comentario de 'Uso' al inicio del script." >&2
+        exit 1
+    fi
+done
+NOMBRE_COMERCIAL="${NOMBRE_COMERCIAL:-$RAZON_SOCIAL}"
+CARPETA="${CARPETA:-empresa-${RUC}}"
+
 if ! [[ "$RUC" =~ ^[0-9]{11}$ ]]; then
     echo "Error: el RUC debe tener 11 dígitos (recibido: '$RUC')." >&2
     exit 1
@@ -74,36 +80,46 @@ if [ -d "$RUTA_BASE" ]; then
     exit 1
 fi
 
-echo "== 1/7: Creando estructura de carpetas en ${RUTA_BASE} =="
+echo "== 1/9: Creando estructura de carpetas en ${RUTA_BASE} =="
 mkdir -p "${RUTA_BASE}"/sunat_archivos/sfs/{DATA,RPTA/procesados,RPTA/errores,CERT,VALI,ALMCERT,ENVIO,FORM,ORIDAT,PARSE,REPO,TEMP,FIRMA}
 mkdir -p "${RUTA_BASE}/bd"
 
-echo "== 2/7: Copiando plantillas VALI (genéricas, no tienen nada de otra empresa) =="
+echo "== 2/9: Copiando plantillas VALI (genéricas, no tienen nada de otra empresa) =="
 cp -r "${VALI_ORIGEN}/." "${RUTA_BASE}/sunat_archivos/sfs/VALI/"
 
-echo "== 3/7: Copiando certificado =="
+echo "== 3/9: Copiando certificado =="
 NOMBRE_CERT="certificado.p12"
-cp "${RUTA_CERT_ORIGEN}" "${RUTA_BASE}/sunat_archivos/sfs/CERT/${NOMBRE_CERT}"
+RUTA_CERT="${RUTA_BASE}/sunat_archivos/sfs/CERT/${NOMBRE_CERT}"
+cp "${RUTA_CERT_ORIGEN}" "${RUTA_CERT}"
 
-echo "== 4/7: Creando BDFacturador.db (esquema limpio + catálogo ERROR copiado) =="
+echo "== 4/9: Creando BDFacturador.db (esquema limpio + catálogo ERROR copiado) =="
 sqlite3 "${RUTA_BASE}/bd/BDFacturador.db" < "${ESQUEMA_SQL}"
 sqlite3 "${RUTA_BASE}/bd/BDFacturador.db" \
     "ATTACH DATABASE '${BD_ORIGEN}' AS origen; INSERT INTO ERROR SELECT * FROM origen.ERROR; DETACH DATABASE origen;"
 
-echo "== 5/7: Generando ALMCERT/FacturadorKey.jks =="
-ALIAS_CERT=$(keytool -list -keystore "${RUTA_BASE}/sunat_archivos/sfs/CERT/${NOMBRE_CERT}" \
-    -storetype PKCS12 -storepass "${CLAVE_CERT}" 2>/dev/null \
+RUTA_JKS="${RUTA_BASE}/sunat_archivos/sfs/ALMCERT/FacturadorKey.jks"
+
+generar_jks() {
+    # -noprompt: sin esto, keytool pregunta "overwrite?" la segunda vez (ya hay
+    # una entrada de un intento previo) y se queda esperando una respuesta que
+    # nunca llega en un script no interactivo. Pasó de verdad dando de alta
+    # Spaxion por SSH a mano, sin -noprompt.
+    keytool -importkeystore -noprompt \
+        -srckeystore "${RUTA_CERT}" -srcstoretype PKCS12 -srcstorepass "${CLAVE_CERT}" \
+        -destkeystore "${RUTA_JKS}" -deststoretype JKS -deststorepass 'SuN@TF4CT' \
+        -srcalias "${ALIAS_CERT}" -destalias certContribuyente
+}
+
+echo "== 5/9: Generando ALMCERT/FacturadorKey.jks (primera pasada) =="
+ALIAS_CERT=$(keytool -list -keystore "${RUTA_CERT}" -storetype PKCS12 -storepass "${CLAVE_CERT}" 2>/dev/null \
     | grep -i "PrivateKeyEntry" | cut -d',' -f1)
 if [ -z "$ALIAS_CERT" ]; then
     echo "Error: no se encontró una PrivateKeyEntry en el certificado — ¿contraseña incorrecta?" >&2
     exit 1
 fi
-keytool -importkeystore \
-    -srckeystore "${RUTA_BASE}/sunat_archivos/sfs/CERT/${NOMBRE_CERT}" -srcstoretype PKCS12 -srcstorepass "${CLAVE_CERT}" \
-    -destkeystore "${RUTA_BASE}/sunat_archivos/sfs/ALMCERT/FacturadorKey.jks" -deststoretype JKS -deststorepass 'SuN@TF4CT' \
-    -srcalias "${ALIAS_CERT}" -destalias certContribuyente
+generar_jks
 
-echo "== 6/7: Generando prod.yaml (puerto ${PUERTO}) y levantando SFS con PM2 =="
+echo "== 6/9: Generando prod.yaml (puerto ${PUERTO}) y levantando SFS con PM2 =="
 # El admin port de Dropwizard (18081 en la instalación original) también debe ser
 # único por instancia, si no la segunda empresa no puede ni arrancar (puerto ocupado).
 ADMIN_PUERTO=$((PUERTO + 9081))
@@ -130,12 +146,45 @@ if [ "$INTENTOS" -ge 30 ]; then
     echo "Advertencia: SFS no respondió tras 60s — puede seguir arrancando; revisa 'pm2 logs ${NOMBRE_PM2}' si lo que sigue falla." >&2
 fi
 
-echo "== 7/7: Guardando RUC/usuario SOL/ruta de trabajo (GrabarParametro.htm) =="
+echo "== 7/9: Importando certificado (registra PRKCRT/NOMCERT en PARAMETRO) =="
+RESP_CERT=$(curl -s -X POST "http://localhost:${PUERTO}/api/ImportarCertificado.htm" \
+    -H "Content-Type: application/json" \
+    -d "$(NOMBRE_CERT="$NOMBRE_CERT" CLAVE_CERT="$CLAVE_CERT" python3 -c '
+import json, os
+print(json.dumps({"nombreCertificado": os.environ["NOMBRE_CERT"], "passPrivateKey": os.environ["CLAVE_CERT"]}))
+')")
+echo "Respuesta de ImportarCertificado.htm: ${RESP_CERT}"
+
+echo "== 7/9 (continuación): regenerando el .jks por si el import lo corrompió =="
+generar_jks
+
+echo "== 8/9: Guardando nombre comercial/dirección (GrabarOtrosParametros.htm) =="
+RESP_OTROS=$(curl -s -X POST "http://localhost:${PUERTO}/api/GrabarOtrosParametros.htm" \
+    -H "Content-Type: application/json" \
+    -d "$(NOMBRE_COMERCIAL="$NOMBRE_COMERCIAL" UBIGEO="$UBIGEO" DIRECCION="$DIRECCION" \
+          DEPARTAMENTO="$DEPARTAMENTO" PROVINCIA="$PROVINCIA" DISTRITO="$DISTRITO" URBANIZACION="$URBANIZACION" \
+          python3 -c '
+import json, os
+print(json.dumps({
+    "txtNombreComercial": os.environ["NOMBRE_COMERCIAL"],
+    "txtUbigeo": os.environ["UBIGEO"],
+    "txtDireccion": os.environ["DIRECCION"],
+    "txtDepartamento": os.environ["DEPARTAMENTO"],
+    "txtProvincia": os.environ["PROVINCIA"],
+    "txtDistrito": os.environ["DISTRITO"],
+    "txtUrbanizacion": os.environ["URBANIZACION"],
+}))
+')")
+echo "Respuesta de GrabarOtrosParametros.htm: ${RESP_OTROS}"
+if ! echo "$RESP_OTROS" | grep -q '"EXITO"'; then
+    echo "ADVERTENCIA: la respuesta no dice EXITO — revisa a mano antes de seguir." >&2
+fi
+
+echo "== 9/9: Guardando RUC/usuario SOL/ruta de trabajo (GrabarParametro.htm) =="
 # Las variables van ANTES de "python3 -c" para que bash las exporte como entorno
-# de ese proceso — puestas después del script (como estaban en una version
-# anterior de este archivo) quedan como argv, no como entorno, y
-# os.environ["RUC"] revienta con KeyError. Confirmado a la fuerza dando de alta
-# Spaxion: el script se cayó justo acá.
+# de ese proceso — puestas después del script quedan como argv, no como entorno,
+# y os.environ["RUC"] revienta con KeyError. Confirmado a la fuerza dando de
+# alta Spaxion: el script se cayó justo acá en una versión anterior.
 RESPUESTA=$(curl -s -X POST "http://localhost:${PUERTO}/api/GrabarParametro.htm" \
     -H "Content-Type: application/json" \
     -d "$(RUC="$RUC" USUARIO_SOL="$USUARIO_SOL" CLAVE_SOL="$CLAVE_SOL" RAZON_SOCIAL="$RAZON_SOCIAL" RUTA_BASE="$RUTA_BASE" python3 -c '
