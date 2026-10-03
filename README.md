@@ -107,9 +107,15 @@ Sin base de datos propia, igual que el resto: qué boletas están pendientes sal
 de la propia bandeja de SFS, y el detalle de cada una (fecha, receptor, montos)
 se relee del `.CAB` que ya quedó en `DATA` al generarla — ver
 [app/resumenes.py](app/resumenes.py) para las simplificaciones conscientes
-respecto del mecanismo completo del daemon original (no hay recuperación de CDR
-por ticket todavía; para eso, reconsultar `GET .../comprobantes/RC-{código}` a
-mano mientras no exista ese mecanismo).
+respecto del mecanismo completo del daemon original.
+
+Un resumen (`RC`) es asíncrono en SUNAT: la respuesta inmediata es un ticket, no
+un CDR. `GET /empresas/{ruc}/comprobantes/{codigo}` (ver más abajo) resuelve ese
+ticket solo, consultando a SUNAT directo cada vez que se llama sobre un RC que
+todavía no tiene CDR — ver [app/ticket_resumen.py](app/ticket_resumen.py). Esto
+requiere `sol_usuario`/`sol_clave` en `empresas.yaml` para esa empresa (ver más
+abajo); sin ellos, el resumen sigue consultable igual, solo que esta resolución
+automática queda inactiva hasta que SFS lo cierre por su cuenta.
 
 Documentación interactiva (Swagger) en `http://localhost:8000/docs` una vez
 levantado el servicio.
@@ -122,6 +128,14 @@ pip install -r requirements-dev.txt
 pytest pruebas/ -q   # o: python pruebas/test_facturador_api.py
 uvicorn app.main:app --reload --port 8000
 ```
+
+Cada empresa en `empresas.yaml` puede llevar opcionalmente `sol_usuario`/
+`sol_clave` (el usuario SOL secundario, en texto plano a propósito — ver
+[app/ticket_resumen.py](app/ticket_resumen.py)): solo los usa la resolución de
+ticket de un resumen diario, nada más de este servicio los toca. `deploy/
+alta_empresa.sh` ya los guarda para empresas nuevas; para Sircon/Spaxion (dadas
+de alta antes de que existiera este campo) hay que agregarlos a mano en el
+`empresas.yaml` del servidor si se quiere esa resolución automática.
 
 Variable de entorno `FACTURADOR_API_EMPRESAS_YAML` para decirle dónde está el
 `empresas.yaml` real. En desarrollo local, sin configurarla, usa

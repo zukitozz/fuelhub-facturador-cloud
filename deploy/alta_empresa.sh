@@ -211,6 +211,7 @@ fi
 echo "== Agregando entrada a ${EMPRESAS_YAML} =="
 mkdir -p "$(dirname "${EMPRESAS_YAML}")"
 RUC="$RUC" RAZON_SOCIAL="$RAZON_SOCIAL" PUERTO="$PUERTO" RUTA_BASE="$RUTA_BASE" \
+    USUARIO_SOL="$USUARIO_SOL" CLAVE_SOL="$CLAVE_SOL" \
     EMPRESAS_YAML="${EMPRESAS_YAML}" python3 <<'PYEOF'
 import os
 import yaml
@@ -228,6 +229,10 @@ data["empresas"][os.environ["RUC"]] = {
     "nombre": os.environ["RAZON_SOCIAL"],
     "puerto_sfs": int(os.environ["PUERTO"]),
     "ruta_base": os.environ["RUTA_BASE"],
+    # En texto plano a propósito — ver app/ticket_resumen.py. Solo se usa para
+    # resolver el ticket de un resumen diario cuando SUNAT tarda en responder.
+    "sol_usuario": os.environ["USUARIO_SOL"],
+    "sol_clave": os.environ["CLAVE_SOL"],
 }
 with open(ruta, "w", encoding="utf-8") as f:
     yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)

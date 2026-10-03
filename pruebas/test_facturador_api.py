@@ -6,7 +6,7 @@ verifica de verdad es lo que no depende de SFS: que los 5 archivos se escriben
 con extensión en MAYÚSCULAS (la causa real del primer bug encontrado migrando a
 Linux) y que la consulta de estado/CDR lee bien lo que ya dejó SFS en disco.
 """
-import os, sys, sqlite3, zipfile, tempfile
+import os, sys, sqlite3, zipfile, tempfile, io
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -241,5 +241,57 @@ r = client.post(f"/empresas/{RUC}/resumenes-diarios")
 print("7. Resumen sin pendientes ->", r.status_code, r.json())
 assert r.status_code == 200
 assert "mensaje" in r.json()
+
+# 8) Resumen (RC) con ticket abierto y SUNAT ya con veredicto: el GET debe
+# resolverlo él mismo (ticket_resumen.resolver_ticket_pendiente), dejar el CDR en
+# RPTA y cerrar la fila en la bandeja de SFS — ver app/ticket_resumen.py para el
+# porqué esto no lo hace SFS solo (exigiría prender su temporizador).
+import app.ticket_resumen as ticket_resumen_mod
+
+with sqlite3.connect(os.path.join(bd_dir, "BDFacturador.db")) as conn:
+    conn.execute(
+        "INSERT INTO DOCUMENTO VALUES (?,?,?,?,?,?,?,?,?)",
+        (RUC, "RC", "RC-20261001-001", f"{RUC}-RC-RC-20261001-001", "08", "-",
+         "01/10/2026 10:00:00", "01/10/2026 10:00:01", "TICKET-ABC"),
+    )
+
+_cdr_buf = io.BytesIO()
+with zipfile.ZipFile(_cdr_buf, "w") as z:
+    z.writestr("R20609785269-RC-RC-20261001-001.xml", "<ApplicationResponse>ACEPTADO POR TICKET</ApplicationResponse>")
+ticket_resumen_mod._consultar_ticket_sunat = lambda empresa, ruc, ticket: ("0", "Aceptado", _cdr_buf.getvalue())
+
+r = client.get(f"/empresas/{RUC}/comprobantes/RC-RC-20261001-001")
+print("8. Resumen con ticket resuelto por SUNAT ->", r.status_code, r.json())
+assert r.status_code == 200
+assert "ACEPTADO POR TICKET" in r.json()["cdr_xml"]
+
+with sqlite3.connect(os.path.join(bd_dir, "BDFacturador.db")) as conn:
+    (ind_situ,) = conn.execute(
+        "SELECT IND_SITU FROM DOCUMENTO WHERE NUM_RUC=? AND TIP_DOCU='RC' AND NUM_DOCU='RC-20261001-001'",
+        (RUC,),
+    ).fetchone()
+assert ind_situ == "03", "el resumen debió cerrarse en la bandeja de SFS tras resolver el ticket"
+
+# 8b) Ticket "todavía procesando" (98): no debe cerrar la fila ni reventar — el
+# llamador puede volver a preguntar más tarde con otro GET.
+with sqlite3.connect(os.path.join(bd_dir, "BDFacturador.db")) as conn:
+    conn.execute(
+        "INSERT INTO DOCUMENTO VALUES (?,?,?,?,?,?,?,?,?)",
+        (RUC, "RC", "RC-20261001-002", f"{RUC}-RC-RC-20261001-002", "08", "-",
+         "01/10/2026 10:00:00", "01/10/2026 10:00:01", "TICKET-XYZ"),
+    )
+ticket_resumen_mod._consultar_ticket_sunat = lambda empresa, ruc, ticket: ("98", "En proceso", None)
+
+r = client.get(f"/empresas/{RUC}/comprobantes/RC-RC-20261001-002")
+print("8b. Resumen con ticket todavía en proceso ->", r.status_code, r.json())
+assert r.status_code == 200
+assert r.json()["cdr_xml"] is None
+
+with sqlite3.connect(os.path.join(bd_dir, "BDFacturador.db")) as conn:
+    (ind_situ,) = conn.execute(
+        "SELECT IND_SITU FROM DOCUMENTO WHERE NUM_RUC=? AND TIP_DOCU='RC' AND NUM_DOCU='RC-20261001-002'",
+        (RUC,),
+    ).fetchone()
+assert ind_situ == "08", "no debe cerrarse mientras SUNAT sigue procesando el ticket"
 
 print("\nTODO OK")

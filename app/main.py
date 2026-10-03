@@ -10,7 +10,7 @@ import logging
 
 from fastapi import FastAPI, HTTPException
 
-from . import archivos, configuracion, consultas, estados, qr, resumenes, sfs_cliente
+from . import archivos, configuracion, consultas, estados, qr, resumenes, sfs_cliente, ticket_resumen
 from .esquemas import ComprobanteAceptado, ComprobanteEntrada, EstadoComprobante
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -107,6 +107,15 @@ def consultar_comprobante(ruc: str, codigo: str):
     estado_sfs = consultas.consultar_estado(empresa.bd_path, ruc, tipo, numero)
     if estado_sfs is None:
         raise HTTPException(status_code=404, detail=f"No existe el comprobante {codigo} para el RUC {ruc}.")
+
+    if tipo == "RC" and estado_sfs["ind_situ"] not in consultas._ESTADOS_CON_CDR:
+        # El resumen diario es asíncrono en SUNAT (ticket, no CDR inmediato) — si
+        # ya hay veredicto, esto lo resuelve acá mismo. Ver app/ticket_resumen.py
+        # para el porqué no lo hace SFS solo.
+        diagnostico = ticket_resumen.resolver_ticket_pendiente(empresa, ruc, numero)
+        if diagnostico:
+            logger.info("Resumen %s-%s: %s", ruc, numero, diagnostico)
+            estado_sfs = consultas.consultar_estado(empresa.bd_path, ruc, tipo, numero)
 
     cdr_xml = None
     if estado_sfs["ind_situ"] in consultas._ESTADOS_CON_CDR:

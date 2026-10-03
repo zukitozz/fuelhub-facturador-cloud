@@ -9,15 +9,25 @@
 #
 # puerto_sfs: el puerto HTTP de ESA instancia de SFS (cada empresa el suyo, nunca
 # compartido). ruta_base: carpeta raíz de esa empresa en el servidor.
+#
+# sol_usuario/sol_clave: usuario y clave SOL secundario, EN TEXTO PLANO a propósito
+# (ver app/ticket_resumen.py). Solo los usa la resolución de ticket de un resumen
+# diario cuando SUNAT tarda en responder — el resto del servicio no los toca. Si se
+# omiten, esa única funcionalidad queda inactiva para esa empresa (se puede seguir
+# consultando el estado del resumen a mano hasta que SFS lo resuelva solo).
 
 empresas:
   "20609785269":
     nombre: "SIRCON PACHACUTEC E.I.R.L."
     puerto_sfs: 9000
     ruta_base: /home/ubuntu/sfs
+    sol_usuario: FACTURA1
+    sol_clave: "claveDeEjemplo"
 
   # Ejemplo de una segunda empresa, una vez dada de alta:
   # "20XXXXXXXXX":
   #   nombre: "EMPRESA DOS S.A.C."
   #   puerto_sfs: 9001
   #   ruta_base: /home/ubuntu/empresas/empresa2
+  #   sol_usuario: FACTURA2
+  #   sol_clave: "otraClaveDeEjemplo"

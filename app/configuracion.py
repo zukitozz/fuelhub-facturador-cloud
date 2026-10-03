@@ -41,6 +41,21 @@ class Empresa:
     # y bd/BDFacturador.db, con la misma estructura que se armó a mano para la
     # primera instalación.
     ruta_base: str
+    # Usuario/clave SOL secundario — en texto plano, a propósito (ver
+    # app/ticket_resumen.py). Solo hace falta para resolver el ticket de un
+    # resumen diario cuando SUNAT tarda en responder; el resto del servicio no
+    # usa ni necesita estos campos. Vacíos si la empresa no los dio de alta
+    # (ningún resumen suyo podrá resolverse por ticket, pero todo lo demás sigue
+    # funcionando igual).
+    sol_usuario: str = ""
+    sol_clave: str = ""
+
+    @property
+    def vali_dir(self) -> str:
+        """Carpeta donde vive constantes.properties — de ahí sale a qué ambiente
+        de SUNAT envía SFS (RUTA_SERV_CDP), que es el mismo donde hay que
+        consultar el ticket de un resumen (ver app/ticket_resumen.py)."""
+        return os.path.join(self.ruta_base, "sunat_archivos", "sfs", "VALI")
 
     @property
     def data_dir(self) -> str:
@@ -78,6 +93,8 @@ def _cargar() -> dict:
             nombre=cfg.get("nombre", ""),
             sfs_base_url=f"http://localhost:{cfg['puerto_sfs']}",
             ruta_base=cfg["ruta_base"],
+            sol_usuario=cfg.get("sol_usuario", ""),
+            sol_clave=cfg.get("sol_clave", ""),
         )
     return empresas
 
