@@ -64,8 +64,23 @@ def escribir_comprobante(comp: ComprobanteEntrada, ruc_emisor: str, data_dir: st
     num_comp = comp.numeracion_comprobante
     es_nota = tipo_comp in _TIPOS_NOTA
 
-    if es_nota and comp.referencia is None:
-        raise ValueError("Una nota de crédito/débito requiere 'referencia'.")
+    if es_nota:
+        ref = comp.referencia
+        if ref is None:
+            raise ValueError("Una nota de crédito/débito requiere 'referencia'.")
+        # Sin motivo (catálogo 09/10) o sin documento afectado no se emite: inventarlos
+        # solo mueve el rechazo a SUNAT, donde no se puede deshacer.
+        if not ref.tipo_nota.strip():
+            raise ValueError("La nota requiere 'referencia.tipo_nota' (código del catálogo 09/10).")
+        if not ref.numeracion_documento_afectado.strip() or not ref.tipo_documento_afectado.strip():
+            raise ValueError("La nota requiere el documento afectado (tipo y numeración).")
+
+    # SUNAT da 2800 si una factura no trae RUC (tipo 6) del receptor, y reenviar no
+    # lo arregla; el valor por defecto "0"/"00000000" solo sirve para una boleta.
+    if tipo_comp == "01":
+        rec = comp.receptor
+        if rec.tipo_documento != "6" or not (rec.numero_documento.isdigit() and len(rec.numero_documento) == 11):
+            raise ValueError("Una factura requiere receptor con tipo_documento '6' y RUC de 11 dígitos.")
 
     base = _nombre_base(ruc_emisor, tipo_comp, num_comp)
     os.makedirs(data_dir, exist_ok=True)

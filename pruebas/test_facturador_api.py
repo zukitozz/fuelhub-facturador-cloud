@@ -65,6 +65,15 @@ print("2. Nota sin referencia ->", r.status_code)
 assert r.status_code == 422
 assert not os.listdir(data_dir), "no debió escribir nada en DATA"
 
+# 2b) Factura sin RUC de receptor -> 422 (SUNAT daría 2800), nada escrito.
+r = client.post(f"/empresas/{RUC}/comprobantes", json={
+    "numeracion_comprobante": "F002-000009", "tipo_comprobante": "FACTURA",
+    "fecha_emision": "2026-10-02T10:00:00", "total": 1.0, "items": [],
+})
+print("2b. Factura sin RUC ->", r.status_code)
+assert r.status_code == 422
+assert not os.listdir(data_dir), "no debió escribir nada en DATA"
+
 # 3) Factura válida: se reemplaza sfs_cliente.generar_y_enviar por un doble — acá
 # NO se prueba la llamada HTTP a SFS (eso ya se validó a mano contra el SFS real
 # en la migración), se prueba que facturador-api arma bien todo lo anterior.
@@ -77,7 +86,7 @@ r = client.post(f"/empresas/{RUC}/comprobantes", json={
     "fecha_emision": "2026-10-02T10:00:00",
     "total": 1.00,
     "monto_letras": "UN CON 00/100 SOLES",
-    "receptor": {"razon_social": "CLIENTE DE PRUEBA"},
+    "receptor": {"tipo_documento": "6", "numero_documento": "20123456789", "razon_social": "CLIENTE DE PRUEBA"},
     "items": [{"descripcion": "ITEM", "cantidad": 1,
                "valor": 0.847458, "valor_venta": 0.85, "igv_venta": 0.15, "precio": 1.00}],
 })
@@ -295,3 +304,47 @@ with sqlite3.connect(os.path.join(bd_dir, "BDFacturador.db")) as conn:
 assert ind_situ == "08", "no debe cerrarse mientras SUNAT sigue procesando el ticket"
 
 print("\nTODO OK")
+
+# 9) Corte de SFS tras el envío: se consulta a SUNAT antes de dejar que reintenten.
+import app.consulta_integrada as ci
+_consultar_real = ci.consultar_comprobante
+def _sfs_caido(*a, **k):
+    raise sfs_cliente.SfsError("read timed out")
+sfs_cliente.generar_y_enviar = _sfs_caido
+cuerpo9 = {
+    "numeracion_comprobante": "F002-000010", "tipo_comprobante": "FACTURA",
+    "fecha_emision": "2026-10-02T10:00:00", "total": 1.00, "monto_letras": "UN CON 00/100 SOLES",
+    "receptor": {"tipo_documento": "6", "numero_documento": "20123456789", "razon_social": "C"},
+    "items": [{"descripcion": "ITEM", "valor": 0.847458, "valor_venta": 0.85, "igv_venta": 0.15, "precio": 1.0}],
+}
+llamadas = []
+def _falso(estado):
+    def f(empresa, ruc, tipo, serie, numero, fecha, monto):
+        llamadas.append((tipo, serie, numero, fecha.strftime("%d/%m/%Y"), monto))
+        return estado, "x"
+    return f
+ci.consultar_comprobante = _falso(ci.ACEPTADO)
+r = client.post(f"/empresas/{RUC}/comprobantes", json=cuerpo9)
+print("9a. Corte pero SUNAT ya lo tiene ->", r.status_code, r.json()["estado"])
+assert r.status_code == 201 and r.json()["estado"] == "enviado"
+assert llamadas == [("01", "F002", "000010", "02/10/2026", 1.0)], llamadas
+ci.consultar_comprobante = _falso(ci.NO_EXISTE)
+r = client.post(f"/empresas/{RUC}/comprobantes", json=cuerpo9)
+print("9b. Corte y SUNAT no lo tiene ->", r.status_code)
+assert r.status_code == 502
+_ruta_orig = configuracion._RUTA_EMPRESAS
+configuracion._RUTA_EMPRESAS = os.path.join(base, "no_existe.yaml")
+assert configuracion.credenciales_consulta(empresa_fake) is None
+assert _consultar_real(empresa_fake, RUC, "01", "F002", "1", __import__("datetime").datetime(2026,10,2), 1.0)[0] == ci.DESCONOCIDO
+print("9c. Sin credenciales -> DESCONOCIDO")
+
+# 9d) Credenciales globales (bloque consulta_integrada) y prioridad de las propias.
+ruta_yaml = os.path.join(base, "empresas.yaml")
+open(ruta_yaml, "w", encoding="utf-8").write(
+    "consulta_integrada: {ruc: '20111111111', client_id: gid, client_secret: gsec}\nempresas: {}\n")
+configuracion._RUTA_EMPRESAS = ruta_yaml
+assert configuracion.credenciales_consulta(empresa_fake) == configuracion.CredencialesConsulta("20111111111", "gid", "gsec")
+propia = __import__("dataclasses").replace(empresa_fake, sol_client_id="pid", sol_client_secret="psec")
+assert configuracion.credenciales_consulta(propia) == configuracion.CredencialesConsulta(RUC, "pid", "psec")
+configuracion._RUTA_EMPRESAS = _ruta_orig
+print("9d. Credenciales globales y propias OK")

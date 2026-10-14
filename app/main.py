@@ -10,7 +10,7 @@ import logging
 
 from fastapi import FastAPI, HTTPException
 
-from . import archivos, configuracion, consultas, estados, qr, resumenes, sfs_cliente, ticket_resumen
+from . import archivos, configuracion, consulta_integrada, consultas, estados, qr, resumenes, sfs_cliente, ticket_resumen
 from .esquemas import ComprobanteAceptado, ComprobanteEntrada, EstadoComprobante
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -64,6 +64,22 @@ def crear_comprobante(ruc: str, comprobante: ComprobanteEntrada):
             fila = sfs_cliente.generar_y_enviar(empresa.sfs_base_url, ruc, tipo, numero)
     except sfs_cliente.SfsError as e:
         logger.error("SFS no disponible para %s (%s): %s", ruc, escrito["base"], e)
+        # El corte pudo ocurrir después de que SUNAT recibió el comprobante: antes de
+        # que el caller reintente (y duplique), se le pregunta a SUNAT.
+        if tipo not in sfs_cliente.TIPOS_SIN_ENVIO_INDIVIDUAL:
+            serie, corr = numero.split("-", 1) if "-" in numero else ("0000", numero)
+            estado_sunat, detalle = consulta_integrada.consultar_comprobante(
+                empresa, ruc, tipo, serie, corr, comprobante.fecha_emision, escrito["total"])
+            if estado_sunat == consulta_integrada.ACEPTADO:
+                logger.warning("%s-%s: SFS falló pero SUNAT ya lo tiene; no se reenvía.", ruc, codigo)
+                return ComprobanteAceptado(
+                    codigo=codigo, estado="enviado",
+                    des_obse="SUNAT ya registró este comprobante (CDR pendiente de descarga); no reenviar.",
+                )
+            raise HTTPException(
+                status_code=502,
+                detail=f"SFS no disponible: {e} (consulta a SUNAT: {estado_sunat}, {detalle})",
+            ) from e
         # 502: el comprobante YA quedó escrito en DATA (ver 'escrito' arriba) — un
         # reintento posterior de GET/alguna operación de soporte puede recuperarlo
         # sin que el caller tenga que volver a mandar el payload.

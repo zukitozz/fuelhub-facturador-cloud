@@ -49,6 +49,10 @@ class Empresa:
     # funcionando igual).
     sol_usuario: str = ""
     sol_clave: str = ""
+    # Credenciales propias de la API REST de SUNAT (Consulta Integrada), opcionales:
+    # si faltan se usan las globales de credenciales_consulta(). No son la clave SOL.
+    sol_client_id: str = ""
+    sol_client_secret: str = ""
 
     @property
     def vali_dir(self) -> str:
@@ -95,8 +99,34 @@ def _cargar() -> dict:
             ruta_base=cfg["ruta_base"],
             sol_usuario=cfg.get("sol_usuario", ""),
             sol_clave=cfg.get("sol_clave", ""),
+            sol_client_id=cfg.get("sol_client_id", ""),
+            sol_client_secret=cfg.get("sol_client_secret", ""),
         )
     return empresas
+
+
+@dataclass(frozen=True)
+class CredencialesConsulta:
+    """Credenciales de la API REST de Consulta Integrada. ruc es el de QUIEN consulta
+    (va en la URL); el emisor del comprobante consultado puede ser otro RUC."""
+    ruc: str
+    client_id: str
+    client_secret: str
+
+
+def credenciales_consulta(empresa: Empresa) -> CredencialesConsulta | None:
+    """Las propias de la empresa si las tiene; si no, las globales del bloque
+    'consulta_integrada' de empresas.yaml (una sola credencial sirve para consultar
+    comprobantes de cualquier emisor). None si no hay ninguna."""
+    if empresa.sol_client_id and empresa.sol_client_secret:
+        return CredencialesConsulta(empresa.ruc, empresa.sol_client_id, empresa.sol_client_secret)
+    with _lock:
+        if not os.path.exists(_RUTA_EMPRESAS):
+            return None
+        with open(_RUTA_EMPRESAS, "r", encoding="utf-8") as fh:
+            glob = (yaml.safe_load(fh) or {}).get("consulta_integrada") or {}
+    ruc, cid, sec = (str(glob.get(k) or "") for k in ("ruc", "client_id", "client_secret"))
+    return CredencialesConsulta(ruc, cid, sec) if ruc and cid and sec else None
 
 
 def obtener_empresa(ruc: str) -> Empresa | None:

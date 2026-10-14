@@ -15,6 +15,17 @@
 # diario cuando SUNAT tarda en responder — el resto del servicio no los toca. Si se
 # omiten, esa única funcionalidad queda inactiva para esa empresa (se puede seguir
 # consultando el estado del resumen a mano hasta que SFS lo resuelva solo).
+#
+# consulta_integrada: credenciales de la API REST de SUNAT para verificar si un
+# comprobante llegó tras un corte de red (se generan en SOL > Empresas >
+# Comprobantes de pago > Credenciales de API SUNAT; no son la clave SOL). UNA sola
+# sirve para consultar comprobantes de cualquier emisor; "ruc" es el de la cuenta
+# SOL que las generó. Opcional: una empresa puede traer sol_client_id/sol_client_secret
+# propios, que tienen prioridad. Sin ninguna, no se consulta y se responde como antes.
+consulta_integrada:
+  ruc: "20XXXXXXXXX"
+  client_id: "client-id-de-ejemplo"
+  client_secret: "client-secret-de-ejemplo"
 
 empresas:
   "20609785269":
