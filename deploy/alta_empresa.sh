@@ -36,8 +36,10 @@
 #   CLAVE_SOL=miClaveSOL PUERTO=9001 RUTA_CERT_ORIGEN=/home/ubuntu/subidas/cert.p12 \
 #   CLAVE_CERT=miClaveCert UBIGEO=150101 DIRECCION="AV. EJEMPLO 123" \
 #   DEPARTAMENTO=LIMA PROVINCIA=LIMA DISTRITO=LIMA URBANIZACION="-" \
-#   [NOMBRE_COMERCIAL="EMPRESA DOS"] [CARPETA=empresa2] \
-#   ./deploy/alta_empresa.sh
+#   [NOMBRE_COMERCIAL="EMPRESA DOS"] [CARPETA=empresa2] [NOMBRE_PM2="EMPRESA2 - 20123456789"] \
+#   bash ./deploy/alta_empresa.sh
+# (con `bash` delante: el archivo no conserva el permiso de ejecución al venir de git).
+# Si das CARPETA, el proceso de PM2 se llama "<CARPETA en mayúsculas> - <RUC>".
 set -euo pipefail
 
 # --- Validaciones básicas: fallar temprano y claro, no a mitad del proceso ---
@@ -126,7 +128,15 @@ ADMIN_PUERTO=$((PUERTO + 9081))
 sed -e "s/port: 9000/port: ${PUERTO}/" -e "s/port: 18081/port: ${ADMIN_PUERTO}/" \
     "${SFS_HOME}/prod.yaml" > "${RUTA_BASE}/prod.yaml"
 
-NOMBRE_PM2="sfs-${RUC}"
+# Nombre descriptivo en `pm2 list`: "CHANCAYLLO - 20612016527". Sale de CARPETA si se
+# dio una (la carpeta por defecto, empresa-<ruc>, no dice nada, ahí queda sfs-<ruc>).
+if [ -z "${NOMBRE_PM2:-}" ]; then
+    if [ "$CARPETA" = "empresa-${RUC}" ]; then
+        NOMBRE_PM2="sfs-${RUC}"
+    else
+        NOMBRE_PM2="${CARPETA^^} - ${RUC}"
+    fi
+fi
 pm2 start java --name "${NOMBRE_PM2}" --interpreter none --cwd "${RUTA_BASE}" -- \
     -Xms64m -Xmx512m -XX:MaxMetaspaceSize=256m -XX:+UseSerialGC -jar "${JAR}" server prod.yaml
 pm2 save
@@ -143,7 +153,7 @@ until curl -s -o /dev/null "http://localhost:${PUERTO}/" || [ "$INTENTOS" -ge 30
     INTENTOS=$((INTENTOS + 1))
 done
 if [ "$INTENTOS" -ge 30 ]; then
-    echo "Advertencia: SFS no respondió tras 60s — puede seguir arrancando; revisa 'pm2 logs ${NOMBRE_PM2}' si lo que sigue falla." >&2
+    echo "Advertencia: SFS no respondió tras 60s — puede seguir arrancando; revisa 'pm2 logs \"${NOMBRE_PM2}\"' si lo que sigue falla." >&2
 fi
 
 echo "== 7/9: Importando certificado (registra PRKCRT/NOMCERT en PARAMETRO) =="
