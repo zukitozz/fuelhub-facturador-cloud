@@ -75,6 +75,10 @@ class ComprobanteAceptado(BaseModel):
     des_obse: str
     hash: Optional[str] = Field(None, description="DigestValue del XML firmado; null si todavía no se firmó")
     qr: Optional[str] = Field(None, description="Los 10 campos del QR de SUNAT, separados por '|'; null si todavía no se firmó")
+    codigo_error: Optional[str] = Field(None, description="Código de error de SUNAT (p.ej. '2800') si el estado es rechazado/error y el texto trae uno; null en cualquier otro caso")
+    descripcion_error: Optional[str] = Field(None, description="Qué significa codigo_error, según el catálogo de SUNAT que lleva SFS; null si no hay código o no está en el catálogo")
+    xml: Optional[str] = Field(None, description="XML UBL firmado, en texto plano. Solo con ?incluir=xml, y solo si ya se firmó")
+    cdr: Optional[str] = Field(None, description="XML de la respuesta de SUNAT (CDR), en texto plano. Solo con ?incluir=cdr, y solo si ya llegó")
 
 
 class EstadoComprobante(BaseModel):
@@ -83,4 +87,7 @@ class EstadoComprobante(BaseModel):
     des_obse: str
     fec_gene: Optional[str] = None
     fec_envi: Optional[str] = None
-    cdr_xml: Optional[str] = Field(None, description="XML de la respuesta de SUNAT, en texto plano, si ya está disponible")
+    codigo_error: Optional[str] = Field(None, description="Código de error de SUNAT si el estado es rechazado/error y el texto trae uno")
+    descripcion_error: Optional[str] = Field(None, description="Qué significa codigo_error, según el catálogo de SUNAT que lleva SFS; null si no hay código o no está en el catálogo")
+    xml: Optional[str] = Field(None, description="XML UBL firmado, en texto plano; disponible desde que el comprobante se firmó (antes, null)")
+    cdr: Optional[str] = Field(None, description="XML de la respuesta de SUNAT (CDR), en texto plano; solo en estados aceptados (antes se llamaba cdr_xml). Una boleta individual nunca lo tiene: es el del resumen (RC)")

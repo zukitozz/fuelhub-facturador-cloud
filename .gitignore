@@ -10,3 +10,7 @@ venv/
 # debe poder borrar las empresas ya dadas de alta. Ver empresas.example.yaml
 # para el formato, y README.md para dónde vive el real en producción.
 /empresas.yaml
+
+# Registro de rechazos (app/rechazos.py): historial vivo del servidor. Ignorado, así
+# un `git reset --hard` del deploy no lo toca.
+/rechazos.jsonl

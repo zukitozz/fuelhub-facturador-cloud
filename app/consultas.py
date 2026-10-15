@@ -15,6 +15,8 @@ import xml.etree.ElementTree as ET
 import zipfile
 from contextlib import closing
 
+from dominio.comprobante import _nombre_base
+
 # Estados de IND_SITU en los que ya hay (o puede haber) un CDR para leer —
 # ver config.py:_NOMBRE_SITU para el catálogo completo.
 _ESTADOS_CON_CDR = {"03", "04", "11", "12"}
@@ -112,6 +114,69 @@ def eliminar_documento(bd_path: str, ruc: str, tipo: str, numero: str):
                 "DELETE FROM DOCUMENTO WHERE NUM_RUC=? AND TIP_DOCU=? AND NUM_DOCU=?",
                 (ruc, tipo, numero),
             )
+
+
+def reiniciar_documento(bd_path: str, firma_dir: str, ruc: str, tipo: str, numero: str) -> bool:
+    """
+    Saca de la bandeja de SFS un documento que quedó en error ('06') o rechazado ('10'),
+    y borra su XML firmado viejo, para poder regenerarlo y reenviarlo (ver app/reenvio.py).
+
+    El DELETE lleva la condición de estado a propósito: si entre que se miró y se borra
+    el documento ya cambió (p.ej. SUNAT lo aceptó), no se toca. Un aceptado nunca se
+    reinicia. Devuelve True si borró la fila.
+    """
+    if not os.path.exists(bd_path):
+        return False
+    with closing(sqlite3.connect(bd_path, timeout=10)) as conexion:
+        with conexion:
+            cursor = conexion.execute(
+                "DELETE FROM DOCUMENTO WHERE NUM_RUC=? AND TIP_DOCU=? AND NUM_DOCU=? "
+                "AND IND_SITU IN ('06','10')",
+                (ruc, tipo, numero),
+            )
+    if cursor.rowcount <= 0:
+        return False
+    try:
+        os.remove(os.path.join(firma_dir, f"{_nombre_base(ruc, tipo, numero)}.xml"))
+    except FileNotFoundError:
+        pass
+    return True
+
+
+def descripcion_error(bd_path: str, codigo: str | None) -> str | None:
+    """
+    Qué significa un código de error de SUNAT (p.ej. '2800'), según el catálogo que
+    SFS lleva en su propia base (tabla ERROR: ~1600 códigos con su texto oficial).
+    None si no hay código, no está en el catálogo o no se puede leer: la descripción
+    es una ayuda, nunca debe romper una respuesta.
+    """
+    if not codigo or not os.path.exists(bd_path):
+        return None
+    try:
+        with closing(sqlite3.connect(bd_path)) as conexion:
+            fila = conexion.execute(
+                "SELECT NOM_CATAERRO FROM ERROR WHERE COD_CATAERRO=?", (codigo,)
+            ).fetchone()
+    except sqlite3.Error:
+        return None
+    return fila[0] if fila else None
+
+
+def obtener_xml_firmado(firma_dir: str, ruc: str, tipo: str, numero: str) -> str | None:
+    """
+    El XML firmado que SFS dejó en FIRMA/ — lo que se envía a SUNAT (o, en una boleta,
+    lo que se entrega al cliente y va dentro del resumen) — como texto, o None si
+    todavía no se firmó o no se puede leer. Se valida que sea XML bien formado antes
+    de devolverlo, igual que el CDR.
+    """
+    ruta = os.path.join(firma_dir, f"{_nombre_base(ruc, tipo, numero)}.xml")
+    try:
+        with open(ruta, "rb") as fh:
+            contenido = fh.read()
+        ET.fromstring(contenido)
+    except (OSError, ET.ParseError):
+        return None
+    return contenido.decode("utf-8", errors="replace")
 
 
 def obtener_cdr_xml(rpta_dir: str, procesados_dir: str, ruc: str, tipo: str, numero: str) -> str | None:

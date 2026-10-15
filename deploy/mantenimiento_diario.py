@@ -24,7 +24,8 @@ Dos fases, cada umbral contado en días desde que SUNAT aceptó el documento
 
 La fila en DOCUMENTO de SFS NUNCA se borra acá (decisión explícita): el estado
 (aceptado/rechazado, fechas) sigue pudiéndose consultar por
-GET /comprobantes/{codigo} aunque cdr_xml ya dé null por no quedar archivo.
+GET /comprobantes/{codigo} aunque cdr ya dé null por no quedar archivo. El XML
+firmado (FIRMA/) no se toca acá, así que sigue disponible en ese mismo GET.
 
 El diseño es re-entrante sin necesitar una tabla propia de "ya procesado": una
 vez que el CDR se archivó, _ruta_cdr() ya no lo encuentra en DATA/RPTA, así que

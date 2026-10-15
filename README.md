@@ -98,7 +98,10 @@ boletas pendientes solo responde que no hay nada que resumir.
 
 ```bash
 curl -X POST http://localhost:8000/empresas/20609785269/resumenes-diarios
-# -> {"numeracion_rc": "RC-20261003-001", "cantidad_boletas": 7, "estado": "aceptado", "des_obse": "-"}
+# -> {"numeracion_rc": "RC-20261003-001", "cantidad_boletas": 7,
+#     "boletas": ["B001-000044", "B001-000045", "..."], "estado": "aceptado", "des_obse": "-"}
+#    "boletas" lista cuáles entraron: si el resumen se rechaza o SUNAT observa
+#    alguna, es lo que permite marcar/reencolar las afectadas en el sistema que llama.
 # o, sin pendientes:
 # -> {"mensaje": "No hay boletas de días anteriores pendientes de resumir."}
 ```
@@ -192,17 +195,23 @@ nunca se lee en producción.
 
 Un solo script (`deploy/alta_empresa.sh`), corrido en el servidor:
 
+Los datos van como variables de entorno (no posicionales), y el script se invoca
+con `bash` delante porque no conserva el permiso de ejecución al venir de git.
+Lo más cómodo es pegarlo en **una sola línea** (los saltos de línea al pegar en la
+terminal del navegador rompen el comando); claves entre comillas simples:
+
 ```bash
 cd /home/ubuntu/facturador-api
-./deploy/alta_empresa.sh <ruc> "<razon_social>" <usuario_sol> <clave_sol> <puerto> \
-    <ruta_al_certificado.p12> <clave_certificado> [nombre_carpeta]
+RUC=20123456789 RAZON_SOCIAL="EMPRESA DOS S.A.C." USUARIO_SOL=FACTURA2 CLAVE_SOL='miClaveSOL' PUERTO=9001 RUTA_CERT_ORIGEN=/home/ubuntu/subidas/certificado2.p12 CLAVE_CERT='miClaveCert' UBIGEO=150101 DIRECCION="AV. EJEMPLO 123" DEPARTAMENTO=LIMA PROVINCIA=LIMA DISTRITO=LIMA URBANIZACION="-" CARPETA=empresa2 bash ./deploy/alta_empresa.sh
 ```
 
-Ejemplo:
-```bash
-./deploy/alta_empresa.sh 20123456789 "EMPRESA DOS S.A.C." FACTURA2 miClaveSOL 9001 \
-    /home/ubuntu/subidas/certificado2.p12 miClaveCert empresa2
-```
+Opcionales: `NOMBRE_COMERCIAL` (por defecto la razón social), `CARPETA` (por defecto
+`empresa-<ruc>`) y `NOMBRE_PM2`. Con `CARPETA` dada, el proceso de PM2 se llama
+`<CARPETA EN MAYÚSCULAS> - <ruc>` (ej. `EMPRESA2 - 20123456789`).
+
+Antes de correrlo: subir el `.p12` al servidor (`scp` con la llave `.pem` de
+Lightsail), tener creado el usuario SOL secundario con el perfil de emisión desde
+el SFS, y elegir un puerto libre.
 
 Hace todo de punta a punta: crea las carpetas (`sunat_archivos/sfs/{DATA,RPTA/...,
 CERT,VALI,ALMCERT,...}`, `bd/`), copia las plantillas `VALI/` genéricas, arma la
@@ -222,6 +231,109 @@ de usarla con datos reales — hazlo siempre primero, como con la primera empres
 administración de Dropwizard único también, `puerto + 9081`) — lleva la cuenta de
 cuáles ya están en uso en `empresas.yaml`.
 
+## XML firmado y CDR en la respuesta
+
+Dos campos, en texto plano (no base64), con el mismo nombre en el `GET` y en el `POST`:
+
+| Campo | Contenido | Cuándo trae valor |
+|---|---|---|
+| `xml` | el XML UBL firmado: el que se envía a SUNAT (en una boleta, el que se entrega al cliente) | desde que SFS lo firma; antes, `null` |
+| `cdr` | la respuesta de SUNAT (`ApplicationResponse`). Antes se llamaba `cdr_xml` | solo en estados aceptados. Un rechazado no lo trae |
+
+| Llamada | Cómo |
+|---|---|
+| `GET /empresas/{ruc}/comprobantes/{codigo}` | **siempre** adjunta `xml` y `cdr` (los que ya existan) |
+| `POST /empresas/{ruc}/comprobantes?incluir=xml,cdr` | los adjunta solo si se piden; un valor desconocido da 400 |
+
+- Son **texto XML exacto**: guardarlos sin reformatear, o la firma deja de validar.
+- **Boletas:** `xml` sí, `cdr` nunca (no tienen CDR propio: es el del resumen, que se
+  obtiene con `GET` del `RC-…`). Y **hay que pedir el XML antes de que el resumen la
+  consuma**, porque entonces su fila sale de la bandeja de SFS y el `GET` da 404:
+  conviene pedirlo en el propio `POST` (`?incluir=xml`).
+- **Hasta cuándo están:** el `xml` queda en `FIRMA/` y el mantenimiento diario no lo
+  toca. El `cdr` sale del `GET` a los 7 días de aceptado (lo archiva
+  `deploy/mantenimiento_diario.py`, ver más abajo). Quien archive el CDR debe pedirlo
+  dentro de ese plazo.
+
+## Reintentar un comprobante fallido
+
+Repetir el `POST` del **mismo número** es la forma de reintentar. La API decide según el
+estado que SFS ya tiene de ese comprobante (código en `app/reenvio.py`):
+
+| Estado previo en SFS | Qué hace el POST |
+|---|---|
+| ninguno, pendiente o en proceso | flujo normal |
+| aceptado, enviado, anulado | **no reenvía nada**; devuelve el estado actual (idempotente) |
+| `rechazado` | limpia el comprobante en SFS y lo **reenvía** (SUNAT no lo registró) |
+| `error`, factura/nota | **pregunta antes a SUNAT** (consulta integrada): si ya lo tiene, responde `enviado` y no reenvía; si no existe, limpia y reenvía; si no pudo confirmar, **502** y no reenvía |
+| `error`, boleta | limpia y vuelve a generar (la boleta nunca sale sola a SUNAT, el error es de firma) |
+
+Sin esta limpieza SFS devolvía la fila vieja sin enviar nada, aunque el dato ya se
+hubiera corregido. Un comprobante aceptado nunca se reinicia. La verificación de un
+`error` requiere las credenciales de consulta integrada (`consulta_integrada` en
+`empresas.yaml`); sin ellas el reintento responde 502 en vez de arriesgar un duplicado.
+
+## Rechazos y soporte: dónde mirar
+
+Cuando un comprobante no sale bien, la información está en varios lugares. De lo
+más rápido a lo más profundo:
+
+| Dónde | Qué trae | Cómo |
+|---|---|---|
+| Respuesta del `POST` | `estado` (`rechazado`/`error`), `des_obse`, `codigo_error` | la recibe quien llama |
+| `GET /empresas/{ruc}/comprobantes/{codigo}` | estado actual, `des_obse`, `codigo_error`, fechas | HTTP |
+| **`GET /empresas/{ruc}/rechazos`** | historial de fallos de esa empresa, lo más reciente primero | HTTP (abajo) |
+| Base de SFS (tabla `DOCUMENTO`) | la fuente original: `IND_SITU`, `DES_OBSE` | `sqlite3 <ruta_base>/bd/BDFacturador.db` |
+| Tabla `ERROR` de esa misma base | catálogo de códigos de SUNAT y su descripción | misma base |
+| Logs de PM2 | cortes de SFS, avisos de rechazo | `pm2 logs facturador-api`, `pm2 logs "<proceso SFS>"` |
+| `<ruta_base>/sunat_archivos/sfs/DATA` | los archivos tal como se enviaron | servidor |
+
+```bash
+sqlite3 /home/ubuntu/empresas/chancayllo/bd/BDFacturador.db \
+  "select TIP_DOCU, NUM_DOCU, IND_SITU, DES_OBSE from DOCUMENTO where IND_SITU in ('06','10') order by FEC_GENE desc limit 20;"
+```
+`06` = error de SFS (no pudo firmar, corte de red); `10` = rechazado por SUNAT.
+
+### El registro de rechazos (`/empresas/{ruc}/rechazos`)
+
+La base de SFS **sobrescribe**: si un rechazado se corrige y se reenvía bien, el
+rechazo desaparece de ahí. Por eso la API deja su propia huella en un archivo
+JSON-lines (`rechazos.jsonl`, una línea por evento), que no se pisa. Sirve para
+soporte ("¿qué pasó con F002-000150?") y para mejorar ("¿qué error se repite más?").
+
+```bash
+curl "http://localhost:8000/empresas/20609785269/rechazos?desde=2026-10-01&origen=sunat&limite=50"
+```
+Filtros: `desde` (AAAA-MM-DD, hora de Lima), `origen`, `limite` (máx. 1000). Cada
+evento trae `fecha`, `codigo` (`tipo-numeración`), `estado`, `codigo_error` (el código
+de SUNAT, p.ej. `2800`, ya separado del texto; `null` si el error es de SFS o de red),
+`descripcion_error` (qué significa ese código), `des_obse`, `origen` y `detalle`.
+
+`descripcion_error` sale de la tabla `ERROR` que SFS lleva en la base de cada empresa
+(~1600 códigos con el texto oficial de SUNAT). Aparece también en el `POST`, en el
+`GET` del comprobante y en la respuesta del resumen diario; es `null` si no hay código
+o no está en el catálogo. Es una ayuda: nunca hace fallar una respuesta.
+
+| `origen` | Qué es |
+|---|---|
+| `sunat` | SUNAT rechazó el comprobante |
+| `sfs` | SFS no pudo firmarlo o generarlo |
+| `validacion` | el payload no pasó las reglas (422): ni llegó a SFS. `detalle` dice qué campo |
+| `red` | SFS no disponible (el comprobante pudo o no llegar a SUNAT; ver 502 de la API) |
+| `resumen` | un resumen diario fallido; `detalle.boletas` lista cuáles incluía |
+| `consulta` | hallado al consultar el estado (no pasó por un POST); se anota una vez |
+
+Los 422 solo se anotan para empresas dadas de alta (con otro RUC no se escribe nada).
+
+**Dónde vive:** variable `FACTURADOR_API_RECHAZOS_LOG`. Sin configurar usa
+`rechazos.jsonl` en la raíz del repo, que está en `.gitignore` y sobrevive al
+`git reset --hard` del deploy. Para ponerlo fuera del repo, como `empresas.yaml`:
+exportarla y `pm2 restart facturador-api --update-env`.
+
+**Pendiente:** el `GET` de un comprobante rechazado no devuelve el CDR (solo lo hace
+para los aceptados). Falta comprobar con un rechazo real si SFS deja el CDR de rechazo
+en disco; de ser así, se agrega.
+
 ## Mantenimiento diario de disco
 
 `deploy/mantenimiento_diario.py` archiva y después borra en serio los archivos
@@ -238,7 +350,7 @@ Dos pasos, contados en días desde que SUNAT aceptó cada documento:
    `.tar.gz` definitivamente.
 
 La fila en `DOCUMENTO` de SFS **nunca se borra**: `GET /comprobantes/{codigo}`
-sigue devolviendo el estado aunque `cdr_xml` ya dé `null` por no quedar
+sigue devolviendo el estado aunque `cdr` ya dé `null` por no quedar
 archivo. Correrlo una vez al día por cron en el servidor:
 
 ```bash

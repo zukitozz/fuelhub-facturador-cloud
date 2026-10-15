@@ -28,7 +28,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from dominio.resumen_diario import _linea_rdi, _linea_trd
 
-from . import archivos, consultas, estados, sfs_cliente
+from . import archivos, consultas, estados, rechazos, sfs_cliente
 
 # Perú no tiene horario de verano: un offset fijo alcanza, sin depender de qué
 # zona horaria tenga configurado el sistema operativo del servidor (suele venir
@@ -105,9 +105,17 @@ def armar_y_enviar_resumen(empresa, ruc: str) -> dict:
             archivos.limpiar_boleta(empresa.data_dir, ruc, numero)
             consultas.eliminar_documento(empresa.bd_path, ruc, "03", numero)
 
+    estado = estados.legible(fila.get("ind_situ", ""))
+    des_obse = fila.get("des_obse", "")
+    codigo_error = rechazos.extraer_codigo(des_obse) if estado in rechazos.ESTADOS_RECHAZO else None
     return {
         "numeracion_rc": numeracion_rc,
         "cantidad_boletas": len(boletas),
-        "estado": estados.legible(fila.get("ind_situ", "")),
-        "des_obse": fila.get("des_obse", ""),
+        # Cuáles entraron: si el resumen se rechaza o SUNAT observa boletas, quien llama
+        # necesita saber a cuáles marcar/reencolar (el RC ya no guarda esa relación).
+        "boletas": [b["numeracion_comprobante"] for b in boletas],
+        "estado": estado,
+        "des_obse": des_obse,
+        "codigo_error": codigo_error,
+        "descripcion_error": consultas.descripcion_error(empresa.bd_path, codigo_error),
     }
