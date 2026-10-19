@@ -156,18 +156,6 @@ if [ "$INTENTOS" -ge 30 ]; then
     echo "Advertencia: SFS no respondió tras 60s — puede seguir arrancando; revisa 'pm2 logs \"${NOMBRE_PM2}\"' si lo que sigue falla." >&2
 fi
 
-echo "== 7/9: Importando certificado (registra PRKCRT/NOMCERT en PARAMETRO) =="
-RESP_CERT=$(curl -s -X POST "http://localhost:${PUERTO}/api/ImportarCertificado.htm" \
-    -H "Content-Type: application/json" \
-    -d "$(NOMBRE_CERT="$NOMBRE_CERT" CLAVE_CERT="$CLAVE_CERT" python3 -c '
-import json, os
-print(json.dumps({"nombreCertificado": os.environ["NOMBRE_CERT"], "passPrivateKey": os.environ["CLAVE_CERT"]}))
-')")
-echo "Respuesta de ImportarCertificado.htm: ${RESP_CERT}"
-
-echo "== 7/9 (continuación): regenerando el .jks por si el import lo corrompió =="
-generar_jks
-
 echo "== 8/9: Guardando nombre comercial/dirección (GrabarOtrosParametros.htm) =="
 RESP_OTROS=$(curl -s -X POST "http://localhost:${PUERTO}/api/GrabarOtrosParametros.htm" \
     -H "Content-Type: application/json" \
@@ -217,6 +205,21 @@ echo "Respuesta de GrabarParametro.htm: ${RESPUESTA}"
 if ! echo "$RESPUESTA" | grep -q '"EXITO"'; then
     echo "ADVERTENCIA: la respuesta no dice EXITO — revisa a mano antes de seguir." >&2
 fi
+
+# Va DESPUÉS de GrabarParametro.htm a propósito: ImportarCertificado.htm responde
+# "No Existe valor parametrizado del RUC" (y no registra NOMCERT/PRKCRT) si el RUC
+# todavía no se guardó. Pasó dando de alta Andahuasi el 2026-10-18.
+echo "== 9b/9: Importando certificado (registra PRKCRT/NOMCERT en PARAMETRO) =="
+RESP_CERT=$(curl -s -X POST "http://localhost:${PUERTO}/api/ImportarCertificado.htm" \
+    -H "Content-Type: application/json" \
+    -d "$(NOMBRE_CERT="$NOMBRE_CERT" CLAVE_CERT="$CLAVE_CERT" python3 -c '
+import json, os
+print(json.dumps({"nombreCertificado": os.environ["NOMBRE_CERT"], "passPrivateKey": os.environ["CLAVE_CERT"]}))
+')")
+echo "Respuesta de ImportarCertificado.htm: ${RESP_CERT}"
+
+echo "== 9b/9 (continuación): regenerando el .jks por si el import lo corrompió =="
+generar_jks
 
 echo "== Agregando entrada a ${EMPRESAS_YAML} =="
 mkdir -p "$(dirname "${EMPRESAS_YAML}")"
