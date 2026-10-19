@@ -14,7 +14,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 
-from . import archivos, configuracion, consulta_integrada, consultas, estados, qr, rechazos, reenvio, resumenes, sfs_cliente, ticket_resumen
+from . import archivos, configuracion, consulta_integrada, consultas, estados, qr, rechazos, reenvio, resumenes, sfs_cliente, simulado, ticket_resumen
 from .esquemas import ComprobanteAceptado, ComprobanteEntrada, EstadoComprobante
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -98,6 +98,8 @@ def crear_comprobante(
         None, description="xml y/o cdr, separados por coma: adjunta el XML firmado y/o el CDR en la respuesta"),
 ):
     pedido = _incluir_o_400(incluir)
+    if simulado.es_simulado(ruc):
+        return simulado.aceptar(comprobante, pedido)
     empresa = _empresa_o_404(ruc)
 
     try:
@@ -212,10 +214,11 @@ def crear_comprobante(
     response_model=EstadoComprobante,
 )
 def consultar_comprobante(ruc: str, codigo: str):
-    empresa = _empresa_o_404(ruc)
-
     if "-" not in codigo:
         raise HTTPException(status_code=400, detail="Formato esperado: {tipo}-{numeracion}, ej. 01-F002-000001")
+    if simulado.es_simulado(ruc):
+        return simulado.consultar(codigo)
+    empresa = _empresa_o_404(ruc)
     tipo, numero = codigo.split("-", 1)
 
     estado_sfs = consultas.consultar_estado(empresa.bd_path, ruc, tipo, numero)
