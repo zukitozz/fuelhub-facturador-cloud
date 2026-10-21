@@ -290,6 +290,14 @@ comprobante: si lo tiene, se da por resuelto y no se manda de nuevo; si no pudo 
 cuenta como intento fallido y no se envía a ciegas. Un solo envío a la vez por comprobante:
 el reintento cede si en ese momento está entrando el `POST` de quien factura.
 
+**Plazo de envío (7 días).** SUNAT solo recibe un comprobante hasta 7 días después de su emisión
+(`FACTURADOR_API_PLAZO_ENVIO_DIAS`). Pasado el plazo, a una factura o nota que sigue en
+`error`/`rechazado` se le pregunta a SUNAT: si **ya la tiene**, queda `resuelto`; si **no la
+tiene**, se **anula** (`IND_SITU='05'` en SFS, con el motivo en `des_obse`, y estado `anulado` en
+`/reintentos`) y deja de reenviarse; si SUNAT no pudo confirmar, no se anula nada y se vuelve a
+mirar en el siguiente ciclo. La anulación es solo interna: no se comunica nada a SUNAT (que nunca
+recibió el comprobante). Quien emitió la factura debe reemplazarla por una nueva dentro de plazo.
+
 **Resúmenes diarios.** El mismo ciclo resuelve los tickets de los resúmenes (`RC`) que SUNAT
 recibió y SFS dejó en `08`: consulta el ticket cada 2 minutos (`_ESPERA_RESUMEN_SEG`), deja el
 CDR y cierra el resumen. Así nadie tiene que hacer el `GET` del RC para que se confirme (hacerlo
@@ -302,7 +310,7 @@ preguntar a SUNAT); si no están, pasa a `manual` y hay que reenviarlo desde el 
 ```bash
 curl "http://localhost:8000/empresas/20612016527/reintentos?estado=manual"
 ```
-`estado`: `activo` (se sigue reintentando; trae `ronda`, `intentos_en_la_ronda` y
+`estado`: `anulado` (venció el plazo, ver abajo), `activo` (se sigue reintentando; trae `ronda`, `intentos_en_la_ronda` y
 `proximo_intento`), `manual` (**requiere intervención**; `motivo` y `ultimo_error` dicen por
 qué) o `resuelto` (aceptado, o SUNAT ya lo tenía). Un `manual` que se corrige y se reenvía
 bien pasa solo a `resuelto`. Las derivaciones a `manual` también quedan en `/rechazos`

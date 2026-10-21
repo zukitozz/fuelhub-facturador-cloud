@@ -27,6 +27,7 @@ _FRASES_TRANSITORIAS = (
     "conexion",
     "temporalmente",
     "service unavailable",
+    "error al verificar estado del ticket",
 )
 
 

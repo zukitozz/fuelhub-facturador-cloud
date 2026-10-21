@@ -17,6 +17,7 @@ import app.main as main_mod
 import app.reintentos as reintentos
 import app.sfs_cliente as sfs_cliente
 from app import archivos
+import app.rechazos as rechazos_mod
 
 RUC = "20612016527"
 base = tempfile.mkdtemp()
@@ -105,6 +106,7 @@ for texto, esperado in [
     ("El sistema no puede responder su solicitud. (No se pudo obtener el ticket de proceso)", True),
     ("Hubo un problema al invocar servicio SUNAT: Could not send Message.", True),
     ("Read timed out", True),
+    ("Hubo un problema al invocar servicio SUNAT: Error al verificar estado del ticket", True),
     (DEFINITIVO, False),
     ("2800 - El dato ingresado en el tipo de documento no es valido", False),
     ("0102 - Usuario o contrasena incorrectos", False),
@@ -242,6 +244,7 @@ codigos = {i["codigo"] for i in r.json()["reintentos"]}
 assert "01-F003-000012" in codigos and "01-F003-000010" not in codigos
 assert all(i["estado"] == "manual" for i in r.json()["reintentos"])
 assert client.get(f"/empresas/{RUC}/reintentos?estado=raro").status_code == 400
+assert client.get(f"/empresas/{RUC}/reintentos?estado=anulado").status_code == 200
 assert client.get("/empresas/00000000000/reintentos").status_code == 404
 assert client.get(f"/empresas/{RUC}/reintentos").json()["total"] >= 8
 print("12. GET /reintentos OK")
@@ -301,10 +304,55 @@ ciclo()
 assert seg_rc("RC-20261020-003")["estado"] == "resuelto" and "T-3" not in consultas_ticket[antes:]
 print("13. Resúmenes: se resuelven solos, 127 -> manual, cerrados por otro camino OK")
 
-# 14) El hilo arranca y se detiene, y se puede apagar.
+# 14) Plazo de 7 días: vencido y SUNAT no lo tiene -> anulado ('05') y no se reenvía; vencido
+# pero SUNAT lo tiene -> resuelto; vencido sin confirmación -> no se anula; justo en el plazo -> normal.
+# El reloj falso corre en 1970: el "hoy" del plazo sale del reloj, no del sistema.
+import datetime as _dt
+hoy_falso = _dt.datetime.fromtimestamp(reloj[0], reintentos._LIMA).date()
+def con_fecha(numero, dias_atras):
+    archivos_data("01", numero)
+    ruta = os.path.join(data_dir, f"{RUC}-01-{numero}.CAB")
+    texto = open(ruta, encoding="utf-8").read().replace("2026-10-17", (hoy_falso - _dt.timedelta(days=dias_atras)).isoformat())
+    open(ruta, "w", encoding="utf-8").write(texto)
+    doc("01", numero, "06", "Could not send Message")
+
+respuestas_sunat = {"000040": ci.NO_EXISTE, "000041": ci.ACEPTADO, "000042": ci.DESCONOCIDO, "000043": ci.NO_EXISTE}
+ci.consultar_comprobante = lambda emp, ruc, tipo, serie, numero, fecha, monto: (respuestas_sunat[numero], "x")
+for n, dias in (("F003-000040", 9), ("F003-000041", 9), ("F003-000042", 9), ("F003-000043", 7)):
+    con_fecha(n, dias)
+envios.clear()
+reintentos.observar(empresa)
+assert estado_sfs("F003-000040") == ("05",), "vencido y SUNAT no lo tiene: anulado en SFS"
+a = seguimiento("F003-000040")
+assert a["estado"] == "anulado" and "venció el plazo de 7 días" in a["motivo"] and "9 días" in a["motivo"], a
+assert a["ultimo_error"] == "Could not send Message"
+assert estado_sfs("F003-000041") == ("06",) and seguimiento("F003-000041")["estado"] == "resuelto", "SUNAT lo tiene: no se anula"
+assert estado_sfs("F003-000042") == ("06",) and seguimiento("F003-000042")["estado"] == "activo", "sin confirmación de SUNAT: no se anula"
+assert estado_sfs("F003-000043") == ("06",) and seguimiento("F003-000043")["estado"] == "activo", "7 días justos: todavía en plazo"
+assert envios == [], "nada de lo vencido se reenvía"
+assert any(e["codigo"] == "01-F003-000040" and e["estado"] == "anulado" for e in rechazos_mod.listar(RUC, origen="reintento"))
+reloj[0] += 11; ciclo()
+assert estado_sfs("F003-000040") == ("05",) and "F003-000040" not in envios
+assert [i["codigo"] for i in reintentos.listar(RUC, "anulado")] == ["01-F003-000040"]
+print("14. Plazo de 7 días: anula solo si venció y SUNAT no lo tiene OK")
+
+# 15) Un estado intermedio de SFS (01/02: el POST está regenerando la fila) NO cierra el seguimiento;
+# y si luego vuelve a fallar, el seguimiento sigue (no se pierde el reintento).
+respuestas_sunat["000044"] = ci.NO_EXISTE
+archivos_data("01", "F003-000044"); doc("01", "F003-000044", "06", "Could not send Message")
+reintentos.observar(empresa)
+doc("01", "F003-000044", "01", "-"); reintentos.observar(empresa)
+assert seguimiento("F003-000044")["estado"] == "activo", "estado 01 no es final"
+doc("01", "F003-000044", "11", "-"); reintentos.observar(empresa)
+assert seguimiento("F003-000044")["estado"] == "resuelto"
+doc("01", "F003-000044", "06", "Could not send Message"); reintentos.observar(empresa)
+assert seguimiento("F003-000044")["estado"] == "activo", "un resuelto que vuelve a fallar se reabre"
+print("15. Estados intermedios no cierran; un resuelto que vuelve a fallar se reabre OK")
+
+# 16) El hilo arranca y se detiene, y se puede apagar.
 os.environ["FACTURADOR_API_REINTENTOS"] = "0"
 assert reintentos.iniciar() is None
 os.environ["FACTURADOR_API_REINTENTOS"] = "1"
 parar = reintentos.iniciar(); assert parar is not None; parar.set()
-print("14. Hilo de fondo OK")
+print("16. Hilo de fondo OK")
 print("TODO OK")

@@ -37,7 +37,7 @@ import time
 from contextlib import closing, contextmanager
 from datetime import datetime, timedelta, timezone
 
-from . import archivos, configuracion, consultas, errores, rechazos, reenvio, sfs_cliente, ticket_resumen
+from . import archivos, configuracion, consulta_integrada, consultas, errores, rechazos, reenvio, sfs_cliente, ticket_resumen
 
 logger = logging.getLogger(__name__)
 
@@ -60,9 +60,12 @@ RONDAS = _entero_de_entorno("FACTURADOR_API_REINTENTOS_RONDAS", 3)
 # Suele estar listo en 1-2 minutos, por eso se mira más seguido que un reenvío.
 ESPERA_RESUMEN_SEG = _entero_de_entorno("FACTURADOR_API_REINTENTOS_ESPERA_RESUMEN_SEG", 2 * 60)
 TIPO_RESUMEN = "RC"
+# Días desde la emisión durante los que SUNAT recibe el comprobante. Pasado el plazo, si
+# SUNAT no lo tiene, ya no hay forma de enviarlo: se da por anulado.
+PLAZO_ENVIO_DIAS = _entero_de_entorno("FACTURADOR_API_PLAZO_ENVIO_DIAS", 7)
 INTERVALO_CICLO_SEG = _entero_de_entorno("FACTURADOR_API_REINTENTOS_CICLO_SEG", 60)
 
-ACTIVO, MANUAL, RESUELTO = "activo", "manual", "resuelto"
+ACTIVO, MANUAL, RESUELTO, ANULADO = "activo", "manual", "resuelto", "anulado"
 
 # Estados de SFS en los que el comprobante dejó de estar en falla: aceptado, enviado,
 # anulado o validándose. Hasta acá no hay nada más que reintentar.
@@ -175,6 +178,56 @@ def _nuevo(ruc: str, d: dict) -> dict:
             "ultimo_intento": None, "ultimo_error": d["des_obse"], "motivo": None}
 
 
+def _atender_vencido(empresa, d: dict, previo: dict | None) -> bool:
+    """Si el plazo de envío del comprobante ya venció, lo resuelve y devuelve True: SUNAT ya
+    lo tiene (resuelto) o no lo tiene y entonces se anula. Si no venció, o SUNAT no pudo
+    confirmar, devuelve False y sigue el flujo normal (que no reenvía a ciegas)."""
+    ruc, tipo, numero = empresa.ruc, d["tipo"], d["numero"]
+    cabecera = archivos.leer_fecha_y_total(empresa.data_dir, ruc, tipo, numero)
+    if cabecera is None:
+        return False
+    fecha, total = cabecera
+    hoy = datetime.fromtimestamp(_ahora(), _LIMA).date()
+    dias = (hoy - fecha.date()).days
+    if dias <= PLAZO_ENVIO_DIAS:
+        return False
+
+    serie, correlativo = numero.split("-", 1) if "-" in numero else ("0000", numero)
+    estado_sunat, detalle = consulta_integrada.consultar_comprobante(
+        empresa, ruc, tipo, serie, correlativo, fecha, total)
+    fila = previo or _nuevo(ruc, d)
+    if estado_sunat in (consulta_integrada.ACEPTADO, consulta_integrada.ANULADO):
+        _a_resuelto(fila, f"SUNAT ya lo tiene ({estado_sunat}: {detalle})", d["des_obse"])
+        return True
+    if estado_sunat != consulta_integrada.NO_EXISTE:
+        return False   # sin confirmación de SUNAT no se anula nada
+    with bloqueo(ruc, f"{tipo}-{numero}", esperar=False) as libre:
+        if not libre:
+            return True   # lo está enviando otro; se ve en el próximo ciclo
+        motivo = (f"Anulado: venció el plazo de {PLAZO_ENVIO_DIAS} días para enviarlo a SUNAT "
+                  f"(emitido el {fecha:%d/%m/%Y}, {dias} días) y SUNAT no lo tiene")
+        if not consultas.anular_documento(empresa.bd_path, ruc, tipo, numero, motivo):
+            return False
+        fila.update(estado=ANULADO, proximo_intento=None, motivo=motivo, ultimo_error=d["des_obse"])
+        _guardar(fila)
+        logger.warning("%s %s-%s: %s", ruc, tipo, numero, motivo)
+        rechazos.registrar(ruc, f"{tipo}-{numero}", "anulado", d["des_obse"], "reintento",
+                           detalle={"motivo": motivo, "dias": dias})
+    return True
+
+
+def _debe_alta(previo: dict | None, d: dict) -> bool:
+    """¿Hay que (re)abrir el seguimiento de este fallo? Sí si no se sigue; también si se dio
+    por resuelto y volvió a fallar, salvo cuando se resolvió porque SUNAT ya lo tenía y SFS
+    conserva la fila vieja con el mismo error."""
+    if previo is None:
+        return True
+    if previo["estado"] != RESUELTO:
+        return False
+    sunat_ya_lo_tenia = (previo["motivo"] or "").startswith("SUNAT ya lo tiene")
+    return not (sunat_ya_lo_tenia and previo["ultimo_error"] == d["des_obse"])
+
+
 def observar(empresa) -> None:
     """Pone al día el seguimiento con lo que SFS tiene hoy: da de alta los fallos nuevos
     (transitorio -> activo, definitivo -> manual) y cierra los que ya no están en falla."""
@@ -184,10 +237,13 @@ def observar(empresa) -> None:
     for d in fallidos:
         previo = _seleccionar("SELECT * FROM reintentos WHERE ruc=? AND tipo=? AND numero=?",
                               (ruc, d["tipo"], d["numero"]))
-        # Ya lo sigue; o lo dio por resuelto con este mismo error (SUNAT ya lo tenía y SFS
-        # sigue con la fila vieja). Un resuelto que vuelve a fallar con otro error se reabre.
-        if previo and not (previo[0]["estado"] == RESUELTO and previo[0]["ultimo_error"] != d["des_obse"]):
+        previo = previo[0] if previo else None
+        if previo and previo["estado"] == RESUELTO and not _debe_alta(previo, d):
+            continue   # SUNAT ya lo tenía y SFS conserva la fila vieja
+        if _atender_vencido(empresa, d, previo):
             continue
+        if not _debe_alta(previo, d):
+            continue   # ya se sigue (activo o manual)
         fila = _nuevo(ruc, d)
         if errores.es_transitorio(d["des_obse"]):
             _guardar(fila)
@@ -201,7 +257,8 @@ def observar(empresa) -> None:
             continue
         actual = consultas.consultar_estado(empresa.bd_path, ruc, fila["tipo"], fila["numero"])
         # Ausente no es resuelto: reenvio.preparar borra la fila un instante antes de regenerarla.
-        if actual is not None and actual["ind_situ"] not in ("06", "10"):
+        # Solo un estado final: en '01'/'02' puede ser un reenvío en curso (el POST regenera la fila).
+        if actual is not None and actual["ind_situ"] in _ESTADOS_SALIDOS:
             _a_resuelto(fila, f"ya no está en error (estado SFS {actual['ind_situ']})")
 
 

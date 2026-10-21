@@ -159,6 +159,25 @@ def reiniciar_documento(bd_path: str, firma_dir: str, ruc: str, tipo: str, numer
     return True
 
 
+def anular_documento(bd_path: str, ruc: str, tipo: str, numero: str, motivo: str) -> bool:
+    """
+    Deja un documento fallido ('06'/'10') como anulado ('05') con el motivo en DES_OBSE.
+    Solo lo marca en la bandeja de SFS, que es lo que ven quienes consultan la API: no
+    se comunica nada a SUNAT. El UPDATE lleva la condición de estado a propósito, igual
+    que reiniciar_documento: si el documento ya cambió (p.ej. SUNAT lo aceptó) no se toca.
+    """
+    if not os.path.exists(bd_path):
+        return False
+    with closing(sqlite3.connect(bd_path, timeout=10)) as conexion:
+        with conexion:
+            cursor = conexion.execute(
+                "UPDATE DOCUMENTO SET IND_SITU='05', DES_OBSE=? "
+                "WHERE NUM_RUC=? AND TIP_DOCU=? AND NUM_DOCU=? AND IND_SITU IN ('06','10')",
+                (motivo[:250], ruc, tipo, numero),
+            )
+    return cursor.rowcount > 0
+
+
 def descripcion_error(bd_path: str, codigo: str | None) -> str | None:
     """
     Qué significa un código de error de SUNAT (p.ej. '2800'), según el catálogo que

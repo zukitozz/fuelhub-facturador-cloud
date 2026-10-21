@@ -299,7 +299,7 @@ def listar_rechazos(
 @app.get("/empresas/{ruc}/reintentos")
 def listar_reintentos(
     ruc: str,
-    estado: Optional[str] = Query(None, description="activo | manual | resuelto"),
+    estado: Optional[str] = Query(None, description="activo | manual | resuelto | anulado"),
 ):
     """
     Seguimiento del reintento automático de los comprobantes que fallaron por un motivo
@@ -307,8 +307,8 @@ def listar_reintentos(
     error definitivo, o se agotaron las rondas). Ver app/reintentos.py.
     """
     _empresa_o_404(ruc)
-    if estado and estado not in (reintentos.ACTIVO, reintentos.MANUAL, reintentos.RESUELTO):
-        raise HTTPException(status_code=400, detail="estado debe ser activo, manual o resuelto")
+    if estado and estado not in (reintentos.ACTIVO, reintentos.MANUAL, reintentos.RESUELTO, reintentos.ANULADO):
+        raise HTTPException(status_code=400, detail="estado debe ser activo, manual, resuelto o anulado")
     items = reintentos.listar(ruc, estado)
     return {"ruc": ruc, "total": len(items), "reintentos": items}
 
