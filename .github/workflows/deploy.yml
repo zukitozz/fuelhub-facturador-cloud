@@ -18,6 +18,7 @@ jobs:
       - run: python pruebas/test_facturador_api.py
       - run: python pruebas/test_mantenimiento.py
       - run: python pruebas/test_reintentos.py
+      - run: python pruebas/test_resumen_automatico.py
 
   desplegar:
     needs: pruebas

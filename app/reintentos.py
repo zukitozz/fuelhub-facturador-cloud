@@ -37,7 +37,7 @@ import time
 from contextlib import closing, contextmanager
 from datetime import datetime, timedelta, timezone
 
-from . import archivos, configuracion, consulta_integrada, consultas, errores, rechazos, reenvio, sfs_cliente, ticket_resumen
+from . import archivos, consulta_integrada, consultas, errores, rechazos, reenvio, sfs_cliente, ticket_resumen
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +63,6 @@ TIPO_RESUMEN = "RC"
 # Días desde la emisión durante los que SUNAT recibe el comprobante. Pasado el plazo, si
 # SUNAT no lo tiene, ya no hay forma de enviarlo: se da por anulado.
 PLAZO_ENVIO_DIAS = _entero_de_entorno("FACTURADOR_API_PLAZO_ENVIO_DIAS", 7)
-INTERVALO_CICLO_SEG = _entero_de_entorno("FACTURADOR_API_REINTENTOS_CICLO_SEG", 60)
 
 ACTIVO, MANUAL, RESUELTO, ANULADO = "activo", "manual", "resuelto", "anulado"
 
@@ -347,33 +346,24 @@ def procesar_vencidos(empresa) -> int:
     return hechos
 
 
-def ciclo() -> None:
-    for empresa in configuracion.listar_empresas():
-        try:
-            observar(empresa)
-            observar_resumenes(empresa)
-            procesar_vencidos(empresa)
-        except Exception:
-            logger.exception("Falló el ciclo de reintentos de %s", empresa.ruc)
+def ciclo_empresa(empresa) -> None:
+    """Un ciclo de reintentos de una empresa (lo invoca app/ciclo.py cada minuto)."""
+    observar(empresa)
+    observar_resumenes(empresa)
+    procesar_vencidos(empresa)
 
 
-def iniciar() -> threading.Event | None:
-    """Arranca el hilo que corre ciclo() cada INTERVALO_CICLO_SEG. Devuelve el Event que
-    lo detiene, o None si está apagado (FACTURADOR_API_REINTENTOS=0)."""
-    if os.getenv("FACTURADOR_API_REINTENTOS", "1") == "0":
-        logger.info("Reintentos automáticos apagados (FACTURADOR_API_REINTENTOS=0).")
-        return None
-    parar = threading.Event()
+def registrar_anulado(ruc: str, tipo: str, numero: str, motivo: str, error: str = "") -> None:
+    """Deja constancia de un comprobante anulado por otro camino (p.ej. una boleta vencida)."""
+    fila = _nuevo(ruc, {"tipo": tipo, "numero": numero, "des_obse": error})
+    fila.update(estado=ANULADO, proximo_intento=None, motivo=motivo)
+    _guardar(fila)
+    rechazos.registrar(ruc, f"{tipo}-{numero}", "anulado", error, "reintento", detalle={"motivo": motivo})
 
-    def bucle():
-        while not parar.is_set():
-            ciclo()
-            parar.wait(INTERVALO_CICLO_SEG)
 
-    threading.Thread(target=bucle, name="reintentos", daemon=True).start()
-    logger.info("Reintentos automáticos: %s intentos cada %s s por ronda, %s rondas, pausa %s s.",
-                INTENTOS_POR_RONDA, ESPERA_ENTRE_INTENTOS_SEG, RONDAS, PAUSA_ENTRE_RONDAS_SEG)
-    return parar
+def registrar_manual(ruc: str, tipo: str, numero: str, motivo: str, error: str = "") -> None:
+    """Deja un comprobante (o resumen) para intervención manual desde fuera de este módulo."""
+    _a_manual(_nuevo(ruc, {"tipo": tipo, "numero": numero, "des_obse": error}), motivo, error)
 
 
 def _iso(epoch):

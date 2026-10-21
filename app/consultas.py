@@ -77,6 +77,18 @@ def documentos_fallidos(bd_path: str, ruc: str) -> list[dict]:
     return [{"tipo": t, "numero": n, "ind_situ": s, "des_obse": o or ""} for t, n, s, o in filas]
 
 
+def numeraciones_resumenes(bd_path: str, ruc: str) -> list[str]:
+    """Numeración de los resúmenes (RC) que SFS envió. Sin los que quedaron en '01'/'06':
+    sus boletas no se consumieron (ver app/resumenes.py), así que no están declaradas."""
+    if not os.path.exists(bd_path):
+        return []
+    with closing(sqlite3.connect(bd_path)) as conexion:
+        filas = conexion.execute(
+            "SELECT NUM_DOCU FROM DOCUMENTO WHERE NUM_RUC=? AND TIP_DOCU='RC' "
+            "AND IND_SITU NOT IN ('01','06')", (ruc,)).fetchall()
+    return [f[0] for f in filas]
+
+
 def siguiente_correlativo_rc(bd_path: str, ruc: str, fecha_yyyymmdd: str) -> int:
     """
     Primer correlativo libre para un RC de hoy (RC-{fecha}-NNN), mirando los que
@@ -159,9 +171,11 @@ def reiniciar_documento(bd_path: str, firma_dir: str, ruc: str, tipo: str, numer
     return True
 
 
-def anular_documento(bd_path: str, ruc: str, tipo: str, numero: str, motivo: str) -> bool:
+def anular_documento(bd_path: str, ruc: str, tipo: str, numero: str, motivo: str,
+                     estados: tuple = ("06", "10")) -> bool:
     """
-    Deja un documento fallido ('06'/'10') como anulado ('05') con el motivo en DES_OBSE.
+    Deja un documento fallido ('06'/'10', o los `estados` que se indiquen: una boleta que
+    nunca salió está en '02') como anulado ('05') con el motivo en DES_OBSE.
     Solo lo marca en la bandeja de SFS, que es lo que ven quienes consultan la API: no
     se comunica nada a SUNAT. El UPDATE lleva la condición de estado a propósito, igual
     que reiniciar_documento: si el documento ya cambió (p.ej. SUNAT lo aceptó) no se toca.
@@ -172,8 +186,8 @@ def anular_documento(bd_path: str, ruc: str, tipo: str, numero: str, motivo: str
         with conexion:
             cursor = conexion.execute(
                 "UPDATE DOCUMENTO SET IND_SITU='05', DES_OBSE=? "
-                "WHERE NUM_RUC=? AND TIP_DOCU=? AND NUM_DOCU=? AND IND_SITU IN ('06','10')",
-                (motivo[:250], ruc, tipo, numero),
+                f"WHERE NUM_RUC=? AND TIP_DOCU=? AND NUM_DOCU=? AND IND_SITU IN ({','.join('?' * len(estados))})",
+                (motivo[:250], ruc, tipo, numero, *estados),
             )
     return cursor.rowcount > 0
 

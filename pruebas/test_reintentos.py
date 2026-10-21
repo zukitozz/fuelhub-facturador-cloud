@@ -14,6 +14,7 @@ import app.configuracion as configuracion
 import app.consulta_integrada as ci
 import app.errores as errores
 import app.main as main_mod
+import app.ciclo as ciclo_mod
 import app.reintentos as reintentos
 import app.sfs_cliente as sfs_cliente
 from app import archivos
@@ -351,8 +352,8 @@ print("15. Estados intermedios no cierran; un resuelto que vuelve a fallar se re
 
 # 16) El hilo arranca y se detiene, y se puede apagar.
 os.environ["FACTURADOR_API_REINTENTOS"] = "0"
-assert reintentos.iniciar() is None
+assert ciclo_mod.iniciar() is None
 os.environ["FACTURADOR_API_REINTENTOS"] = "1"
-parar = reintentos.iniciar(); assert parar is not None; parar.set()
+parar = ciclo_mod.iniciar(); assert parar is not None; parar.set()
 print("16. Hilo de fondo OK")
 print("TODO OK")

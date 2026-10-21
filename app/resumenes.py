@@ -24,11 +24,14 @@ estado/resumenes.py de fuelhub-facturador para la versión completa):
     estado después, pero si SUNAT tarda en resolver el ticket, hay que
     reintentar esa consulta a mano o agregar ese mecanismo más adelante.
 """
+import logging
 from datetime import date, datetime, timedelta, timezone
 
 from dominio.resumen_diario import _linea_rdi, _linea_trd
 
-from . import archivos, consultas, estados, rechazos, sfs_cliente
+from . import archivos, consultas, estados, rechazos, registro_resumenes, sfs_cliente
+
+logger = logging.getLogger(__name__)
 
 # Perú no tiene horario de verano: un offset fijo alcanza, sin depender de qué
 # zona horaria tenga configurado el sistema operativo del servidor (suele venir
@@ -104,6 +107,12 @@ def armar_y_enviar_resumen(empresa, ruc: str) -> dict:
             numero = boleta["numeracion_comprobante"]
             archivos.limpiar_boleta(empresa.data_dir, ruc, numero)
             consultas.eliminar_documento(empresa.bd_path, ruc, "03", numero)
+        # Recuerda qué boletas entraron (la bandeja de SFS ya las borró): ver registro_resumenes.
+        try:
+            registro_resumenes.guardar(ruc, numeracion_rc, dia.isoformat(),
+                                       [b["numeracion_comprobante"] for b in boletas])
+        except Exception:
+            logger.exception("No se pudo registrar el resumen %s %s", ruc, numeracion_rc)
 
     estado = estados.legible(fila.get("ind_situ", ""))
     des_obse = fila.get("des_obse", "")

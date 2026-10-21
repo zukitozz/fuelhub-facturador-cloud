@@ -320,7 +320,41 @@ bien pasa solo a `resuelto`. Las derivaciones a `manual` también quedan en `/re
 `reintentos.db` en la raíz del repo, ignorado por git). Se puede ajustar con
 `FACTURADOR_API_REINTENTOS_POR_RONDA` (5), `_ESPERA_SEG` (600), `_PAUSA_SEG` (86400),
 `_RONDAS` (3) y `_CICLO_SEG` (60); `FACTURADOR_API_REINTENTOS=0` apaga todo. Corre en un hilo
-del mismo proceso, así que depende de un solo proceso de uvicorn (como hoy bajo PM2).
+del mismo proceso (`app/ciclo.py`), así que depende de un solo proceso de uvicorn (como hoy bajo PM2).
+
+## Resumen diario automático de boletas
+
+**La API envía sola el resumen diario de todas las empresas**, una vez al día, pasada la
+medianoche de Lima (`FACTURADOR_API_RESUMEN_HORA`, por defecto `00:10`; código en
+`app/resumen_automatico.py`). Los sistemas que emiten boletas ya no tienen que llamar a
+`POST /empresas/{ruc}/resumenes-diarios`: el endpoint sigue existiendo y es compatible (si alguien
+lo llama de más responde "No hay boletas…").
+
+Cada corrida, por empresa: (1) **anula** las boletas pendientes cuyo plazo de 7 días venció (un
+resumen declara una sola fecha y SUNAT lo rechazaría entero); (2) arma y envía **un resumen por
+cada fecha pendiente**; (3) deja el resumen que SFS dé en error o rechazado en `/reintentos` como
+`manual`. Si la corrida falla (SFS caído) se repite cada 10 min, hasta 5 veces ese día, y si no
+queda en `manual` y se vuelve a intentar al día siguiente. El ticket de cada resumen lo resuelve
+solo el ciclo de reintentos.
+
+**Cómo saber en qué resumen quedó cada boleta** (la API lo recuerda; SFS borra la boleta al declararla):
+
+```bash
+curl "http://localhost:8000/empresas/20612016527/resumenes?desde=2026-10-18"
+# -> {"ruc": "...", "total": 1, "resumenes": [{"numeracion_rc": "RC-20261019-001", "codigo": "RC-RC-20261019-001",
+#      "fecha_referencia": "2026-10-18", "enviado_en": "2026-10-19T00:12:03-05:00", "cantidad_boletas": 118,
+#      "boletas": ["B003-019178", "..."], "estado": "aceptado", "des_obse": "Aceptado (CDR recuperado por ticket)"}]}
+
+curl http://localhost:8000/empresas/20612016527/comprobantes/03-B003-019178
+# -> la boleta ya declarada responde con el estado de su resumen:
+#    {"codigo": "03-B003-019178", "estado": "aceptado", "des_obse": "Declarada en el resumen RC-20261019-001: ...", "cdr": "<...CDR del resumen...>"}
+```
+`estado` es el del resumen (`enviado` mientras SUNAT procesa el ticket, `aceptado` al cerrarse).
+Una boleta **anulada por plazo** responde `anulado` (y figura en `/reintentos?estado=anulado`).
+Los resúmenes anteriores al registro se reconstruyen solos desde su `.RDI`.
+
+Ver [docs/indicaciones-resumenes-automaticos.md](docs/indicaciones-resumenes-automaticos.md) para
+los cambios que hacen los sistemas que consumen la API.
 
 ## Rechazos y soporte: dónde mirar
 

@@ -8,14 +8,14 @@ Correr con: uvicorn app.main:app --host 0.0.0.0 --port 8000
 """
 import logging
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, datetime
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 
-from . import archivos, configuracion, consulta_integrada, consultas, estados, qr, rechazos, reenvio, reintentos, resumenes, sfs_cliente, simulado, ticket_resumen
+from . import archivos, ciclo, configuracion, consulta_integrada, consultas, estados, qr, rechazos, registro_resumenes, reenvio, reintentos, resumenes, sfs_cliente, simulado, ticket_resumen
 from .esquemas import ComprobanteAceptado, ComprobanteEntrada, EstadoComprobante
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -23,9 +23,9 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def _ciclo_de_vida(app: FastAPI):
-    # El reintento automático de comprobantes fallidos vive en este mismo proceso
-    # (app/reintentos.py): un hilo que se detiene al apagar el servicio.
-    parar = reintentos.iniciar()
+    # Las tareas automáticas (reintentos y resumen diario) viven en este mismo proceso
+    # (app/ciclo.py): un hilo que se detiene al apagar el servicio.
+    parar = ciclo.iniciar()
     yield
     if parar:
         parar.set()
@@ -227,6 +227,28 @@ def _procesar_comprobante(empresa, ruc: str, comprobante: ComprobanteEntrada, pe
     )
 
 
+def _boleta_en_resumen(empresa, ruc: str, tipo: str, numero: str, codigo: str) -> EstadoComprobante | None:
+    """Una boleta ya declarada sale de la bandeja de SFS (queda dentro de su resumen): su
+    estado es el del resumen que la llevó. None si no consta en ningún resumen."""
+    if tipo != "03":
+        return None
+    rc = registro_resumenes.rc_de_boleta(ruc, numero)
+    if rc is None:
+        return None
+    estado_rc = consultas.consultar_estado(empresa.bd_path, ruc, "RC", rc)
+    ind_situ = estado_rc["ind_situ"] if estado_rc else ""
+    cdr = (consultas.obtener_cdr_xml(empresa.rpta_dir, empresa.procesados_dir, ruc, "RC", rc)
+           if ind_situ in consultas._ESTADOS_CON_CDR else None)
+    return EstadoComprobante(
+        codigo=codigo,
+        estado=estados.legible(ind_situ) if estado_rc else "enviado",
+        des_obse=f"Declarada en el resumen {rc}" + (f": {estado_rc['des_obse']}" if estado_rc else ""),
+        fec_gene=estado_rc["fec_gene"] if estado_rc else None,
+        fec_envi=estado_rc["fec_envi"] if estado_rc else None,
+        cdr=cdr,
+    )
+
+
 @app.get(
     "/empresas/{ruc}/comprobantes/{codigo}",
     response_model=EstadoComprobante,
@@ -241,6 +263,9 @@ def consultar_comprobante(ruc: str, codigo: str):
 
     estado_sfs = consultas.consultar_estado(empresa.bd_path, ruc, tipo, numero)
     if estado_sfs is None:
+        declarada = _boleta_en_resumen(empresa, ruc, tipo, numero, codigo)
+        if declarada:
+            return declarada
         raise HTTPException(status_code=404, detail=f"No existe el comprobante {codigo} para el RUC {ruc}.")
 
     if tipo == "RC" and estado_sfs["ind_situ"] not in consultas._ESTADOS_CON_CDR:
@@ -313,17 +338,51 @@ def listar_reintentos(
     return {"ruc": ruc, "total": len(items), "reintentos": items}
 
 
+@app.get("/empresas/{ruc}/resumenes")
+def listar_resumenes(
+    ruc: str,
+    desde: Optional[date] = Query(None, description="Solo resúmenes enviados desde este día (hora de Lima), AAAA-MM-DD"),
+    limite: int = Query(100, ge=1, le=1000),
+):
+    """
+    Los resúmenes diarios de boletas de esta empresa, el más reciente primero: qué boletas
+    declaró cada uno y cómo va (el estado se lee en vivo). Los resúmenes ahora los envía la
+    API sola al terminar el día (ver app/resumen_automatico.py); esta es la forma de saber en
+    cuál quedó cada boleta. Una boleta también responde con el estado de su resumen en
+    GET /comprobantes/03-{numeración}.
+    """
+    empresa = _empresa_o_404(ruc)
+    desde_epoch = int(datetime.combine(desde, datetime.min.time(), tzinfo=rechazos._LIMA).timestamp()) if desde else None
+    items = []
+    for r in registro_resumenes.listar(ruc, desde_epoch, limite):
+        sfs = consultas.consultar_estado(empresa.bd_path, ruc, "RC", r["numeracion_rc"])
+        items.append({
+            "numeracion_rc": r["numeracion_rc"],
+            "codigo": f"RC-{r['numeracion_rc']}",
+            "fecha_referencia": r["fecha_referencia"],
+            "enviado_en": datetime.fromtimestamp(r["enviado_en"], rechazos._LIMA).isoformat(timespec="seconds"),
+            "cantidad_boletas": len(r["boletas"]),
+            "boletas": r["boletas"],
+            "estado": estados.legible(sfs["ind_situ"]) if sfs else "desconocido",
+            "des_obse": sfs["des_obse"] if sfs else "",
+        })
+    return {"ruc": ruc, "total": len(items), "resumenes": items}
+
+
 @app.post("/empresas/{ruc}/resumenes-diarios")
 def crear_resumen_diario(ruc: str):
     """
     Arma y envía el resumen diario (RC) con las boletas de días anteriores que
     quedaron generadas y a la espera (ver sfs_cliente.TIPOS_SIN_ENVIO_INDIVIDUAL).
-    Pensado para dispararse una vez al día (cron, o a mano) — no hace nada malo
+    Desde que la API los envía sola al terminar el día (app/resumen_automatico.py) ya
+    no hace falta llamarlo; sigue disponible para forzarlo a mano y no hace nada malo
     si se llama de más: sin boletas pendientes, responde sin crear un RC vacío.
     """
     empresa = _empresa_o_404(ruc)
     try:
-        resultado = resumenes.armar_y_enviar_resumen(empresa, ruc)
+        # El mismo candado que el envío automático (app/resumen_automatico.py): no se cruzan.
+        with reintentos.bloqueo(ruc, "RESUMEN"):
+            resultado = resumenes.armar_y_enviar_resumen(empresa, ruc)
         if resultado["estado"] in rechazos.ESTADOS_RECHAZO:
             # Las boletas van en el detalle: es lo que permite saber cuáles reencolar
             rechazos.registrar(ruc, resultado["numeracion_rc"], resultado["estado"],
