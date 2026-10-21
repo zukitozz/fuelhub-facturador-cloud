@@ -273,6 +273,47 @@ hubiera corregido. Un comprobante aceptado nunca se reinicia. La verificación d
 `error` requiere las credenciales de consulta integrada (`consulta_integrada` en
 `empresas.yaml`); sin ellas el reintento responde 502 en vez de arriesgar un duplicado.
 
+## Reintento automático de comprobantes fallidos
+
+Además del reintento a pedido (repetir el `POST`), la API reintenta sola los comprobantes
+que fallaron por un motivo **transitorio** (código en `app/reintentos.py`). No depende de
+quién envió el comprobante: cada minuto mira la bandeja de SFS de cada empresa y toma lo
+que esté en `error`/`rechazado`.
+
+| Fallo | Qué hace |
+|---|---|
+| **Transitorio**: SUNAT sin servicio ("servicio de autenticación no disponible", "error en el batch", "no se pudo obtener el ticket"), `Could not send Message`, timeouts, SFS caído | reintenta: **5 intentos, uno cada 10 min** (una ronda); pausa de **1 día**; otra ronda; pausa; tercera ronda. Agotadas las 3 rondas queda en `manual` con su último estado |
+| **Definitivo**: SUNAT rechaza el contenido (p.ej. `3103` IGV mal calculado, `2800`), credenciales, lo que no se reconoce | **no se reintenta**: pasa directo a `manual`, porque reenviar lo mismo da lo mismo |
+
+**Antes de cada reenvío se le pregunta a SUNAT** (consulta integrada) si ya tiene el
+comprobante: si lo tiene, se da por resuelto y no se manda de nuevo; si no pudo confirmar,
+cuenta como intento fallido y no se envía a ciegas. Un solo envío a la vez por comprobante:
+el reintento cede si en ese momento está entrando el `POST` de quien factura.
+
+**Resúmenes diarios.** El mismo ciclo resuelve los tickets de los resúmenes (`RC`) que SUNAT
+recibió y SFS dejó en `08`: consulta el ticket cada 2 minutos (`_ESPERA_RESUMEN_SEG`), deja el
+CDR y cierra el resumen. Así nadie tiene que hacer el `GET` del RC para que se confirme (hacerlo
+sigue funcionando). Un ticket que SUNAT ya no conoce (127) pasa a `manual`: hay que revisarlo en
+el portal. Aparecen en `/reintentos` con código `RC-<numeración>`.
+
+Necesita los archivos del comprobante en `DATA` (de ahí salen la fecha y el total para
+preguntar a SUNAT); si no están, pasa a `manual` y hay que reenviarlo desde el sistema de origen.
+
+```bash
+curl "http://localhost:8000/empresas/20612016527/reintentos?estado=manual"
+```
+`estado`: `activo` (se sigue reintentando; trae `ronda`, `intentos_en_la_ronda` y
+`proximo_intento`), `manual` (**requiere intervención**; `motivo` y `ultimo_error` dicen por
+qué) o `resuelto` (aceptado, o SUNAT ya lo tenía). Un `manual` que se corrige y se reenvía
+bien pasa solo a `resuelto`. Las derivaciones a `manual` también quedan en `/rechazos`
+(`origen=reintento`).
+
+**Dónde vive:** SQLite propia, variable `FACTURADOR_API_REINTENTOS_BD` (sin configurar,
+`reintentos.db` en la raíz del repo, ignorado por git). Se puede ajustar con
+`FACTURADOR_API_REINTENTOS_POR_RONDA` (5), `_ESPERA_SEG` (600), `_PAUSA_SEG` (86400),
+`_RONDAS` (3) y `_CICLO_SEG` (60); `FACTURADOR_API_REINTENTOS=0` apaga todo. Corre en un hilo
+del mismo proceso, así que depende de un solo proceso de uvicorn (como hoy bajo PM2).
+
 ## Rechazos y soporte: dónde mirar
 
 Cuando un comprobante no sale bien, la información está en varios lugares. De lo

@@ -178,6 +178,28 @@ def leer_cabecera_boleta(data_dir: str, ruc_emisor: str, numero: str) -> dict | 
     }
 
 
+def leer_fecha_y_total(data_dir: str, ruc_emisor: str, tipo: str, numero: str) -> tuple[datetime, float] | None:
+    """
+    (fecha de emisión, total) de una factura o nota, releídos de la cabecera que
+    escribir_comprobante() dejó en DATA. Los necesita la consulta a SUNAT antes de un
+    reenvío (ver app/consulta_integrada.py) cuando nadie está mandando el payload: el
+    reintento automático de app/reintentos.py. None si los archivos ya no están.
+
+    Cabecera de factura (.CAB): 0101|fecha|hora|-|0000|tipoDoc|numDoc|razón|moneda|igv|grav|total|...
+    Cabecera de nota (.NOT):    0101|fecha|hora|0000|tipoDoc|numDoc|razón|moneda|motivo|desc|
+                                tipoAfectado|numAfectado|igv|grav|total|...
+    """
+    ext, col_total = ("NOT", 14) if tipo in _TIPOS_NOTA else ("CAB", 11)
+    ruta = os.path.join(data_dir, f"{_nombre_base(ruc_emisor, tipo, numero)}.{ext}")
+    try:
+        with open(ruta, encoding="utf-8") as fh:
+            campos = fh.readline().rstrip("\n").split("|")
+        fecha = datetime.strptime(f"{campos[1]} {campos[2]}", "%Y-%m-%d %H:%M:%S")
+        return fecha, float(campos[col_total])
+    except (OSError, IndexError, ValueError):
+        return None
+
+
 def escribir_resumen(data_dir: str, ruc_emisor: str, numeracion_rc: str, lineas_rdi: list, lineas_trd: list) -> str:
     """Escribe el .RDI/.TRD de un resumen diario. numeracion_rc lleva el prefijo
     completo ("RC-20261003-001"); el nombre de archivo en DATA va sin él —

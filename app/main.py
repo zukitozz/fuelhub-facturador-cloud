@@ -7,6 +7,7 @@ carpetas que SFS ya mantiene por su cuenta (ver consultas.py).
 Correr con: uvicorn app.main:app --host 0.0.0.0 --port 8000
 """
 import logging
+from contextlib import asynccontextmanager
 from datetime import date
 from typing import Optional
 
@@ -14,15 +15,26 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 
-from . import archivos, configuracion, consulta_integrada, consultas, estados, qr, rechazos, reenvio, resumenes, sfs_cliente, simulado, ticket_resumen
+from . import archivos, configuracion, consulta_integrada, consultas, estados, qr, rechazos, reenvio, reintentos, resumenes, sfs_cliente, simulado, ticket_resumen
 from .esquemas import ComprobanteAceptado, ComprobanteEntrada, EstadoComprobante
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
+@asynccontextmanager
+async def _ciclo_de_vida(app: FastAPI):
+    # El reintento automático de comprobantes fallidos vive en este mismo proceso
+    # (app/reintentos.py): un hilo que se detiene al apagar el servicio.
+    parar = reintentos.iniciar()
+    yield
+    if parar:
+        parar.set()
+
+
 app = FastAPI(
     title="facturador-api",
     description="Recibe comprobantes, los firma y envía a SUNAT vía SFS, y expone el CDR de respuesta.",
+    lifespan=_ciclo_de_vida,
 )
 
 
@@ -101,7 +113,13 @@ def crear_comprobante(
     if simulado.es_simulado(ruc):
         return simulado.aceptar(comprobante, pedido)
     empresa = _empresa_o_404(ruc)
+    # Un solo envío a la vez por comprobante: el reintento automático no debe cruzarse
+    # con este POST (ver app/reintentos.py).
+    with reintentos.bloqueo(ruc, f"{comprobante.tipo_comprobante}-{comprobante.numeracion_comprobante}"):
+        return _procesar_comprobante(empresa, ruc, comprobante, pedido)
 
+
+def _procesar_comprobante(empresa, ruc: str, comprobante: ComprobanteEntrada, pedido: set) -> ComprobanteAceptado:
     try:
         escrito = archivos.escribir_comprobante(comprobante, ruc, empresa.data_dir)
     except ValueError as e:
@@ -276,6 +294,23 @@ def listar_rechazos(
     _empresa_o_404(ruc)
     items = rechazos.listar(ruc, desde=desde, origen=origen, limite=limite)
     return {"ruc": ruc, "total": len(items), "rechazos": items}
+
+
+@app.get("/empresas/{ruc}/reintentos")
+def listar_reintentos(
+    ruc: str,
+    estado: Optional[str] = Query(None, description="activo | manual | resuelto"),
+):
+    """
+    Seguimiento del reintento automático de los comprobantes que fallaron por un motivo
+    transitorio, y de los que quedaron para intervención manual (`estado=manual`: un
+    error definitivo, o se agotaron las rondas). Ver app/reintentos.py.
+    """
+    _empresa_o_404(ruc)
+    if estado and estado not in (reintentos.ACTIVO, reintentos.MANUAL, reintentos.RESUELTO):
+        raise HTTPException(status_code=400, detail="estado debe ser activo, manual o resuelto")
+    items = reintentos.listar(ruc, estado)
+    return {"ruc": ruc, "total": len(items), "reintentos": items}
 
 
 @app.post("/empresas/{ruc}/resumenes-diarios")

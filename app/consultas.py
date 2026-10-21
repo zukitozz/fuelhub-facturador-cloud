@@ -61,6 +61,22 @@ def boletas_pendientes_resumen(bd_path: str, ruc: str) -> list[str]:
     return [f[0] for f in filas]
 
 
+def documentos_fallidos(bd_path: str, ruc: str) -> list[dict]:
+    """
+    Facturas y notas que SFS tiene en error ('06') o rechazadas ('10'): lo que
+    app/reintentos.py vigila. Sin boletas (nunca salen solas a SUNAT) ni resúmenes.
+    """
+    if not os.path.exists(bd_path):
+        return []
+    with closing(sqlite3.connect(bd_path)) as conexion:
+        filas = conexion.execute(
+            "SELECT TIP_DOCU, NUM_DOCU, IND_SITU, DES_OBSE FROM DOCUMENTO "
+            "WHERE NUM_RUC=? AND IND_SITU IN ('06','10') AND TIP_DOCU IN ('01','07','08')",
+            (ruc,),
+        ).fetchall()
+    return [{"tipo": t, "numero": n, "ind_situ": s, "des_obse": o or ""} for t, n, s, o in filas]
+
+
 def siguiente_correlativo_rc(bd_path: str, ruc: str, fecha_yyyymmdd: str) -> int:
     """
     Primer correlativo libre para un RC de hoy (RC-{fecha}-NNN), mirando los que

@@ -65,6 +65,11 @@ _TICKET_NO_EXISTE = "127"
 # SFS cae cuando una consulta de ticket falla, no solo '08'/'09' de "enviado").
 _ESTADOS_RESUMEN_ABIERTO = ("05", "06", "08", "09", "10")
 
+# Prefijos del diagnóstico de resolver_ticket_pendiente cuando ya es definitivo, para
+# que app/reintentos.py decida sin interpretar el texto libre.
+TICKET_CERRADO = "CERRADO"
+TICKET_PERDIDO = "PERDIDO"
+
 # Ancho de la columna DES_OBSE del SFS — ver esquema_bd.sql.
 _MAX_DES_OBSE = 250
 
@@ -171,6 +176,21 @@ def _obtener_ticket(bd_path: str, ruc: str, numeracion: str) -> str | None:
     return (fila[0] or None) if fila else None
 
 
+def resumenes_abiertos(bd_path: str, ruc: str) -> list[str]:
+    """Numeraciones de los RC que SUNAT recibió (tienen ticket) y que SFS sigue dando por
+    abiertos: los que app/reintentos.py resuelve solos."""
+    if not os.path.exists(bd_path):
+        return []
+    marcas = ",".join("?" * len(_ESTADOS_RESUMEN_ABIERTO))
+    with closing(sqlite3.connect(bd_path)) as conexion:
+        filas = conexion.execute(
+            f"SELECT NUM_DOCU FROM DOCUMENTO WHERE NUM_RUC=? AND TIP_DOCU='RC' "
+            f"AND NUM_TICKET IS NOT NULL AND NUM_TICKET<>'' AND IND_SITU IN ({marcas})",
+            (ruc, *_ESTADOS_RESUMEN_ABIERTO),
+        ).fetchall()
+    return [f[0] for f in filas]
+
+
 def _guardar_cdr(rpta_dir: str, ruc: str, numeracion: str, cdr: bytes) -> None:
     """Deja el CDR en RPTA con el mismo nombre que usaría el envío normal —de ahí
     lo lee consultas.obtener_cdr_xml() sin saber que vino por este camino."""
@@ -225,7 +245,7 @@ def resolver_ticket_pendiente(empresa, ruc: str, numeracion: str) -> str | None:
         # SUNAT. No se cierra solo —la numeración puede no estar aceptada y
         # requiere revisión manual en el portal antes de decidir qué hacer con
         # las boletas que agrupaba (ya quedaron fuera de DATA al generar el RC).
-        return f"el ticket {ticket} ya no existe en SUNAT ({mensaje}) — requiere revisión manual"
+        return f"{TICKET_PERDIDO}: el ticket {ticket} ya no existe en SUNAT ({mensaje}) — requiere revisión manual"
     if codigo == _TICKET_EN_PROCESO:
         return f"SUNAT todavía procesa el ticket {ticket} ({mensaje})"
     if not (cdr and codigo in _TICKET_CON_CDR):
@@ -233,4 +253,4 @@ def resolver_ticket_pendiente(empresa, ruc: str, numeracion: str) -> str | None:
 
     _guardar_cdr(empresa.rpta_dir, ruc, numeracion, cdr)
     _cerrar_resumen_en_sfs(empresa.bd_path, ruc, numeracion, mensaje or "Aceptado (CDR recuperado por ticket)")
-    return f"CDR del ticket {ticket} recuperado y resumen cerrado ({mensaje})"
+    return f"{TICKET_CERRADO}: CDR del ticket {ticket} recuperado y resumen cerrado ({mensaje})"

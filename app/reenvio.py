@@ -11,6 +11,8 @@ mismo, y solo en esos dos estados.
 
 Regla (de lo más a lo menos peligroso):
   - '10' rechazado: SUNAT lo rechazó, no lo registró. Se limpia la fila y se reenvía.
+    Salvo que el motivo sea una caída de SUNAT (ver app/errores.py): SFS también lo deja
+    en '10' y ahí sí pudo haber llegado, así que se trata como el '06'.
   - '06' error, en factura/nota: pudo haber salido y perderse la respuesta, y reenviar un
     comprobante que SUNAT ya tiene lo duplica (solo se deshace con una nota de crédito).
     Antes de limpiar se le PREGUNTA a SUNAT (consulta integrada):
@@ -26,7 +28,7 @@ Regla (de lo más a lo menos peligroso):
 import logging
 from datetime import datetime
 
-from . import consulta_integrada, consultas, sfs_cliente
+from . import consulta_integrada, consultas, errores, sfs_cliente
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +47,9 @@ def preparar(empresa, ruc: str, tipo: str, numero: str,
         return SEGUIR, ""
 
     es_boleta = tipo in sfs_cliente.TIPOS_SIN_ENVIO_INDIVIDUAL
-    if previo["ind_situ"] == "06" and not es_boleta:
+    # Un '10' por una caída de SUNAT (no por contenido) también pudo haber llegado.
+    puede_haber_salido = previo["ind_situ"] == "06" or errores.es_transitorio(previo["des_obse"])
+    if puede_haber_salido and not es_boleta:
         serie, correlativo = numero.split("-", 1) if "-" in numero else ("0000", numero)
         estado_sunat, detalle = consulta_integrada.consultar_comprobante(
             empresa, ruc, tipo, serie, correlativo, fecha_emision, total)

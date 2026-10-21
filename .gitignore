@@ -14,3 +14,6 @@ venv/
 # Registro de rechazos (app/rechazos.py): historial vivo del servidor. Ignorado, así
 # un `git reset --hard` del deploy no lo toca.
 /rechazos.jsonl
+
+# Seguimiento del reintento automático (app/reintentos.py): estado vivo del servidor.
+/reintentos.db

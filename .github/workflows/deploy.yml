@@ -17,6 +17,7 @@ jobs:
       - run: pip install -r requirements-dev.txt
       - run: python pruebas/test_facturador_api.py
       - run: python pruebas/test_mantenimiento.py
+      - run: python pruebas/test_reintentos.py
 
   desplegar:
     needs: pruebas
