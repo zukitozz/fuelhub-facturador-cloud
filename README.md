@@ -353,7 +353,7 @@ curl http://localhost:8000/empresas/20612016527/comprobantes/03-B003-019178
 Una boleta **anulada por plazo** responde `anulado` (y figura en `/reintentos?estado=anulado`).
 Los resúmenes anteriores al registro se reconstruyen solos desde su `.RDI`.
 
-Ver [docs/indicaciones-resumenes-automaticos.md](docs/indicaciones-resumenes-automaticos.md) para
+Ver [docs/especificacion-consumo-api.md](docs/especificacion-consumo-api.md) (sección 3) para
 los cambios que hacen los sistemas que consumen la API.
 
 ## Rechazos y soporte: dónde mirar
