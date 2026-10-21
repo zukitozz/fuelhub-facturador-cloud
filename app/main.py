@@ -145,6 +145,8 @@ def _procesar_comprobante(empresa, ruc: str, comprobante: ComprobanteEntrada, pe
             codigo=codigo, estado="enviado",
             des_obse=f"SUNAT ya registró este comprobante ({detalle_previo}); no reenviar.",
         )
+    if accion == reenvio.ANULADO_POR_PLAZO:
+        return ComprobanteAceptado(codigo=codigo, estado="anulado", des_obse=detalle_previo)
     if accion == reenvio.INDETERMINADO:
         rechazos.registrar(ruc, codigo, "no_verificable", detalle_previo, "red")
         raise HTTPException(
@@ -317,7 +319,11 @@ def listar_rechazos(
     no se pisa cuando un comprobante se corrige y se reenvía bien. Ver app/rechazos.py.
     """
     _empresa_o_404(ruc)
-    items = rechazos.listar(ruc, desde=desde, origen=origen, limite=limite)
+    # Lo anulado por plazo vencido ya está cerrado (ver /reintentos?estado=anulado): sus
+    # fallos viejos no se vuelven a mostrar como rechazos.
+    anulados = {f["codigo"] for f in reintentos.listar(ruc, reintentos.ANULADO)}
+    items = [e for e in rechazos.listar(ruc, desde=desde, origen=origen, limite=1000000)
+             if e.get("codigo") not in anulados][:limite]
     return {"ruc": ruc, "total": len(items), "rechazos": items}
 
 

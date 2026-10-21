@@ -35,6 +35,8 @@ logger = logging.getLogger(__name__)
 SEGUIR = "seguir"                  # flujo normal (tras limpiar la fila, si hacía falta)
 YA_EN_SUNAT = "ya_en_sunat"        # SUNAT ya lo tiene: no reenviar
 INDETERMINADO = "indeterminado"    # no se pudo verificar: no reenviar
+ANULADO_POR_PLAZO = "anulado_por_plazo"   # venció el plazo de 7 días y se anuló: no reenviar
+MARCA_VENCIDO = "venció el plazo"          # texto que deja reintentos.py en DES_OBSE al anular
 
 _ESTADOS_REINICIABLES = ("06", "10")
 
@@ -43,6 +45,10 @@ def preparar(empresa, ruc: str, tipo: str, numero: str,
              fecha_emision: datetime, total: float) -> tuple[str, str]:
     """(accion, detalle). detalle explica YA_EN_SUNAT e INDETERMINADO; vacío en SEGUIR."""
     previo = consultas.consultar_estado(empresa.bd_path, ruc, tipo, numero)
+    if previo is not None and previo["ind_situ"] == "05" and MARCA_VENCIDO in (previo["des_obse"] or ""):
+        # Anulado por vencer el plazo (app/reintentos.py): reenviarlo lo dejaría otra vez en
+        # error y el reintento lo volvería a anular, en bucle mientras el emisor lo reenvíe.
+        return ANULADO_POR_PLAZO, previo["des_obse"]
     if previo is None or previo["ind_situ"] not in _ESTADOS_REINICIABLES:
         return SEGUIR, ""
 
