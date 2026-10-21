@@ -21,10 +21,10 @@ Qué hace, por empresa:
   4) Borra de logs_errores/ lo que tenga más de DIAS_RETENCION_ERRORES días.
 
 La extracción es por contexto, no exacta: el log no repite el número en cada línea
-(el SOAP de SUNAT y los stack traces no lo traen). Por cada línea que menciona el
-comprobante se guardan LINEAS_PREVIAS antes y LINEAS_POSTERIORES después. Si SFS
-procesa dos comprobantes pegados, el contexto de uno puede traer líneas del otro:
-sobra información, no falta.
+(el SOAP de SUNAT y los stack traces no lo traen). Cada vez que el log marca el inicio
+de la generación o del envío de un comprobante con error (_ANCLAS), se guardan las
+siguientes LINEAS_POSTERIORES líneas, o hasta que empiece el envío de otro comprobante.
+Un comprobante guarda como máximo MAX_LINEAS_POR_COMPROBANTE líneas.
 
 Por seguridad NO hace nada por defecto: sin --aplicar solo informa qué guardaría y
 qué borraría. Tampoco está en el cron: hay que agregarlo a mano, después de revisar
@@ -37,7 +37,6 @@ Uso:
     python3 deploy/mantenimiento_logs.py --aplicar  # guarda y borra
 """
 import argparse
-import collections
 import glob
 import logging
 import os
@@ -55,8 +54,14 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger(__name__)
 
 DIAS_RETENCION_ERRORES = 15
-LINEAS_PREVIAS = 40
-LINEAS_POSTERIORES = 200
+LINEAS_POSTERIORES = 300  # de un envío: la respuesta de SUNAT llega ~60-120 líneas después
+MAX_LINEAS_POR_COMPROBANTE = 3000
+# Solo estas líneas abren el contexto de un comprobante: el inicio de su generación o de
+# su envío. SFS relee su bandeja cada pocos segundos y deja cada archivo pendiente en el
+# log miles de veces (cargarArchivosContribuyente...); si esas menciones abrieran
+# contexto, un comprobante atascado terminaría guardando casi el log entero.
+_ANCLAS = ("Enviando archivo a SUNAT, filename", "getNum_docu() :", "Numero ticket")
+_NUMERACION = re.compile(r"^(?:[A-Z0-9]{4}-\d{1,8}|RC-\d{8}-\d{3})$")
 
 _SEG_POR_DIA = 86400
 _LOG_DIARIO = re.compile(r"^facturador-(\d{4}-\d{2}-\d{2})\.log$")
@@ -74,7 +79,8 @@ def _necesarios(ruc: str) -> set[str]:
     codigos = {e.get("codigo") for e in rechazos.listar(ruc, limite=10**9)}
     codigos |= {f["codigo"] for f in reintentos.listar(ruc)}
     # "01-F003-013072" -> "F003-013072"; "RC-RC-20261020-003" -> "RC-20261020-003"
-    return {c.split("-", 1)[1] for c in codigos if c and "-" in c}
+    numeraciones = {c.split("-", 1)[1] for c in codigos if c and "-" in c}
+    return {n for n in numeraciones if _NUMERACION.match(n)}
 
 
 def _extraer(ruta_log: str, numeraciones: set[str]) -> dict[str, list[str]]:
@@ -83,24 +89,21 @@ def _extraer(ruta_log: str, numeraciones: set[str]) -> dict[str, list[str]]:
     if not numeraciones:
         return {}
     patron = re.compile("|".join(re.escape(n) for n in sorted(numeraciones, key=len, reverse=True)))
-    previas = collections.deque(maxlen=LINEAS_PREVIAS)
     pendientes: dict[str, int] = {}  # numeración -> cuántas líneas posteriores faltan
     salida: dict[str, list[str]] = {}
     with open(ruta_log, "r", encoding="utf-8", errors="replace") as fh:
         for linea in fh:
-            linea = _tachar(linea)
-            mencionadas = set(patron.findall(linea))
-            for n in mencionadas:
-                if n not in pendientes:  # primer contacto en este tramo: llevar el contexto previo
-                    salida.setdefault(n, []).extend(previas)
-                pendientes[n] = LINEAS_POSTERIORES
+            if any(a in linea for a in _ANCLAS):
+                # Empieza otro envío/generación: se cierra lo que seguía abierto y se
+                # abre solo para los comprobantes con error que menciona.
+                pendientes = {n: LINEAS_POSTERIORES for n in set(patron.findall(linea))}
             for n in list(pendientes):
-                salida[n].append(linea)
-                if n not in mencionadas:
-                    pendientes[n] -= 1
-                    if pendientes[n] <= 0:
-                        del pendientes[n]
-            previas.append(linea)
+                lineas = salida.setdefault(n, [])
+                if len(lineas) < MAX_LINEAS_POR_COMPROBANTE:
+                    lineas.append(_tachar(linea))
+                pendientes[n] -= 1
+                if pendientes[n] <= 0:
+                    del pendientes[n]
     return salida
 
 
