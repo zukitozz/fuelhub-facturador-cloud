@@ -29,6 +29,7 @@ Si ya tenían integrado el servicio, revisen la sección 3 (cambia dónde se ve 
 6. **Para reintentar se reenvía el mismo número.** Nunca un número nuevo para reintentar un error, un `502` o un timeout: se salta un correlativo o se duplica.
 7. **El `xml` y el `cdr` se guardan sin reformatear.** Si cambia un solo espacio, la firma deja de validar.
 8. **Plazo de envío de 7 días.** SUNAT solo recibe un comprobante hasta 7 días después de su emisión. Pasado ese plazo ya no se puede enviar (sección 4). Emitir y reintentar dentro de plazo.
+9. **No mandar notas de crédito ni de débito sobre una boleta hasta que el resumen de esa boleta esté `aceptado`.** SUNAT rechaza con `2119` ("el comprobante … no fue informado") la nota que llega antes, y ese número queda registrado como rechazado (sección 3).
 
 ## 1. Emitir: `POST /empresas/{ruc}/comprobantes`
 
@@ -52,7 +53,8 @@ Query opcional: `?incluir=xml,cdr` agrega esos archivos a la respuesta (texto pl
 
 **`receptor`** (por defecto `"0"`, `"00000000"`, `"CLIENTE VARIOS"`)
 - Factura: `tipo_documento` debe ser `"6"` y `numero_documento` un RUC de 11 dígitos. Si no, responde `422`.
-- Boleta: puede ir con los valores por defecto (consumidor final), o con `"1"` y un DNI de 8 dígitos.
+- Boleta: hasta S/ 700 puede ir con los valores por defecto (consumidor final), o con `"1"` y un DNI de 8 dígitos.
+- Boleta **mayor a S/ 700**: el receptor debe estar identificado con DNI (`"1"`, 8 dígitos) o carnet de extranjería (`"4"`, hasta 12 caracteres), con un número distinto de 0. Si no, responde `422`.
 
 **`items[]`**
 
@@ -168,6 +170,18 @@ La boleta **nunca se envía sola a SUNAT**: queda `generado` y se informa en un 
 5. El **CDR de una boleta es el del resumen**; la boleta individual nunca tiene uno propio.
 6. El detalle de un resumen también se puede ver con `GET /empresas/{ruc}/comprobantes/RC-{numeracion_rc}` (el código es `RC-` + la `numeracion_rc`, o sea `RC-RC-20261019-001`).
 
+### Notas de crédito y de débito sobre una boleta
+
+SUNAT solo acepta una nota sobre una boleta que ya declaró en un resumen. La API **no retiene** la nota: si se manda antes, SUNAT la rechaza con `2119` ("El comprobante B003-… no fue informado") y reenviar el mismo número puede devolver otra vez "ya informado … rechazado". Por eso **el sistema que emite debe esperar** antes de mandarla:
+
+1. Consultar `GET /empresas/{ruc}/comprobantes/03-{numeración de la boleta}`.
+2. Mandar la nota solo si responde `estado: "aceptado"` (su `des_obse` dice "Declarada en el resumen RC-…: Aceptado").
+3. Si responde `generado`, `enviado` o `404`, todavía no está declarada: volver a consultar más tarde. Si `rechazado`, `error` o `anulado`, no mandar la nota y avisar a soporte.
+
+Como el resumen de las boletas de un día sale a las 00:10 de uno o dos días después, una nota sobre una boleta reciente tardará en poder enviarse. El plazo de 7 días corre desde la emisión de la nota, así que hay margen, pero no conviene dejarlo para el último día. Esto no aplica a notas sobre facturas, que se pueden mandar apenas la factura queda `aceptado`.
+
+Si la nota se mandó antes de tiempo y quedó rechazada con `2119`, esperar a que la boleta quede `aceptado` y reenviar el mismo número una vez. Si SUNAT sigue respondiendo "ya informado … rechazado", emitir la nota con un número nuevo.
+
 ### Cómo reaccionar al estado
 
 | Estado de la boleta / resumen | Qué hacer |
@@ -231,7 +245,7 @@ La anulación es **solo interna**: no se comunica nada a SUNAT, que nunca recibi
 | `400` | `incluir` o `estado` inválido, o `codigo` mal formado | Corregir la llamada |
 | `404` | RUC no dado de alta, o comprobante inexistente | Verificar |
 | `409` | No se pudo armar el resumen a mano (`detail`) | Leer el detalle |
-| `422` | Dato inválido: campo faltante, factura sin RUC, nota sin `referencia` | Corregir y **no reintentar igual** |
+| `422` | Dato inválido: campo faltante, factura sin RUC, boleta mayor a S/ 700 sin DNI/CE, nota sin `referencia` | Corregir y **no reintentar igual** |
 | `502` | SFS caído, o no se pudo verificar en SUNAT | Reintentar luego con el **mismo número** (o esperar el reintento automático) |
 
 El formato de error es `{"detail": "texto"}`. En un `422` de campos, `detail` es una lista de `{loc, msg, type}`.
@@ -264,6 +278,7 @@ El formato de error es `{"detail": "texto"}`. En un `422` de campos, `detail` es
 - [ ] Pedir `?incluir=xml` en las boletas.
 - [ ] **Quitar la llamada diaria a `POST /resumenes-diarios`** (o aceptar `200`); ya no es necesaria.
 - [ ] **Conciliar boletas** con `GET /resumenes` o con el `GET` de cada boleta; dejar de tratar `404` como "ya declarada".
+- [ ] **No mandar notas sobre boletas hasta que la boleta figure `aceptado`** (consultar `GET /comprobantes/03-{numeración}`).
 - [ ] Reintentar siempre con el mismo número.
 - [ ] Emitir y reenviar dentro del plazo de 7 días.
 - [ ] Revisar a diario `GET /reintentos?estado=manual`.
