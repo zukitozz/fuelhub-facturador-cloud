@@ -82,6 +82,23 @@ def escribir_comprobante(comp: ComprobanteEntrada, ruc_emisor: str, data_dir: st
         if rec.tipo_documento != "6" or not (rec.numero_documento.isdigit() and len(rec.numero_documento) == 11):
             raise ValueError("Una factura requiere receptor con tipo_documento '6' y RUC de 11 dígitos.")
 
+    # Boleta de más de S/ 700: el receptor debe estar identificado con DNI (tipo "1",
+    # 8 dígitos) o carnet de extranjería (tipo "4", hasta 12 caracteres), y el número
+    # no puede ser todo ceros (el "00000000" por defecto es el cliente anónimo).
+    if tipo_comp == "03" and comp.total > 700:
+        rec = comp.receptor
+        num = rec.numero_documento.strip()
+        valido = (
+            (rec.tipo_documento == "1" and num.isdigit() and len(num) == 8)
+            or (rec.tipo_documento == "4" and num.isalnum() and len(num) <= 12)
+        ) and num.strip("0") != ""
+        if not valido:
+            raise ValueError(
+                "Una boleta mayor a S/ 700 requiere receptor identificado con DNI "
+                "(tipo_documento '1', 8 dígitos) o carnet de extranjería "
+                "(tipo_documento '4'), con número distinto de 0."
+            )
+
     base = _nombre_base(ruc_emisor, tipo_comp, num_comp)
     os.makedirs(data_dir, exist_ok=True)
     ext_cab = _EXT_CABECERA.get(tipo_comp, _EXT_CABECERA_POR_DEFECTO)

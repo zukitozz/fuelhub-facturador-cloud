@@ -617,3 +617,17 @@ r = client.post(f"/empresas/{RUC}/comprobantes", json=_cuerpo("F002-000026"))
 assert r.status_code == 201 and r.json()["estado"] == "anulado", r.text
 assert len(enviados) == n_antes, "un anulado por plazo no debe enviarse de nuevo"
 print("12. Reintentos: rechazado y error se reenvían; aceptado nunca; ante la duda no OK")
+
+# 13) Boleta > S/ 700: exige DNI o carné de extranjería válidos (distintos de 0).
+def _boleta_700(total, tipo, numero, n):
+    return client.post(f"/empresas/{RUC}/comprobantes", json=dict(
+        _cuerpo("B001-0009" + n), numeracion_comprobante="B001-0009" + n, tipo_comprobante="BOLETA",
+        total=total, receptor={"tipo_documento": tipo, "numero_documento": numero, "razon_social": "C"}))
+assert _boleta_700(700.01, "0", "00000000", "01").status_code == 422, "anónima > 700 debe rechazarse"
+assert _boleta_700(700.01, "1", "00000000", "02").status_code == 422, "DNI en ceros debe rechazarse"
+assert _boleta_700(700.01, "1", "1234", "03").status_code == 422, "DNI de 4 dígitos debe rechazarse"
+assert _boleta_700(700.01, "4", "0", "04").status_code == 422, "CE = 0 debe rechazarse"
+assert _boleta_700(700.00, "0", "00000000", "05").status_code != 422, "hasta 700 no exige identificar"
+assert _boleta_700(700.01, "1", "45678912", "06").status_code != 422, "DNI válido > 700 pasa"
+assert _boleta_700(700.01, "4", "001234567", "07").status_code != 422, "CE válido > 700 pasa"
+print("13. Boleta > 700 exige DNI/CE válido OK")
