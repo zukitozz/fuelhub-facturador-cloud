@@ -144,10 +144,12 @@ def eliminar_documento(bd_path: str, ruc: str, tipo: str, numero: str):
             )
 
 
-def reiniciar_documento(bd_path: str, firma_dir: str, ruc: str, tipo: str, numero: str) -> bool:
+def reiniciar_documento(bd_path: str, firma_dir: str, ruc: str, tipo: str, numero: str,
+                        estados: tuple = ("06", "10")) -> bool:
     """
-    Saca de la bandeja de SFS un documento que quedó en error ('06') o rechazado ('10'),
-    y borra su XML firmado viejo, para poder regenerarlo y reenviarlo (ver app/reenvio.py).
+    Saca de la bandeja de SFS un documento que quedó en error ('06') o rechazado ('10'; o
+    los `estados` que se indiquen: reenvio.py añade '05' cuando SUNAT lo rechazó y no lo
+    registró), y borra su XML firmado viejo, para poder regenerarlo y reenviarlo (ver app/reenvio.py).
 
     El DELETE lleva la condición de estado a propósito: si entre que se miró y se borra
     el documento ya cambió (p.ej. SUNAT lo aceptó), no se toca. Un aceptado nunca se
@@ -159,8 +161,8 @@ def reiniciar_documento(bd_path: str, firma_dir: str, ruc: str, tipo: str, numer
         with conexion:
             cursor = conexion.execute(
                 "DELETE FROM DOCUMENTO WHERE NUM_RUC=? AND TIP_DOCU=? AND NUM_DOCU=? "
-                "AND IND_SITU IN ('06','10')",
-                (ruc, tipo, numero),
+                f"AND IND_SITU IN ({','.join('?' * len(estados))})",
+                (ruc, tipo, numero, *estados),
             )
     if cursor.rowcount <= 0:
         return False

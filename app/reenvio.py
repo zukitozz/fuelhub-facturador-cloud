@@ -22,7 +22,10 @@ Regla (de lo más a lo menos peligroso):
   - '06' en boleta: la boleta nunca se envía sola a SUNAT (solo se firma; ver
     sfs_cliente.TIPOS_SIN_ENVIO_INDIVIDUAL), así que un error acá es de firma y no hay nada
     que preguntar: se limpia y se vuelve a generar.
-  - Cualquier otro estado (aceptado, enviado, en proceso, pendiente, anulado): no se toca.
+  - '05' sin la marca de plazo vencido, en factura/nota: SFS lo deja así tras un rechazo de
+    SUNAT (p.ej. 3270). Se trata como el '06': se pregunta a SUNAT y solo si no existe se
+    limpia y se reenvía. Con la marca de plazo (anulado por reintentos.py) no se reenvía.
+  - Cualquier otro estado (aceptado, enviado, en proceso, pendiente, anulado por plazo): no se toca.
     Un comprobante aceptado jamás se reinicia.
 """
 import logging
@@ -49,12 +52,19 @@ def preparar(empresa, ruc: str, tipo: str, numero: str,
         # Anulado por vencer el plazo (app/reintentos.py): reenviarlo lo dejaría otra vez en
         # error y el reintento lo volvería a anular, en bucle mientras el emisor lo reenvíe.
         return ANULADO_POR_PLAZO, previo["des_obse"]
-    if previo is None or previo["ind_situ"] not in _ESTADOS_REINICIABLES:
+    es_boleta = tipo in sfs_cliente.TIPOS_SIN_ENVIO_INDIVIDUAL
+    if previo is None:
+        return SEGUIR, ""
+    # '05' sin la marca de plazo: SFS lo dejó así tras un rechazo de SUNAT (p.ej. 3270). En
+    # factura/nota se trata como el '06': se pregunta a SUNAT antes de limpiar, por si fuera
+    # una baja real de un comprobante aceptado. En boleta no se toca (va por resumen).
+    rechazo_en_05 = previo["ind_situ"] == "05" and not es_boleta
+    if previo["ind_situ"] not in _ESTADOS_REINICIABLES and not rechazo_en_05:
         return SEGUIR, ""
 
-    es_boleta = tipo in sfs_cliente.TIPOS_SIN_ENVIO_INDIVIDUAL
     # Un '10' por una caída de SUNAT (no por contenido) también pudo haber llegado.
-    puede_haber_salido = previo["ind_situ"] == "06" or errores.es_transitorio(previo["des_obse"])
+    puede_haber_salido = (previo["ind_situ"] in ("05", "06")
+                          or errores.es_transitorio(previo["des_obse"]))
     if puede_haber_salido and not es_boleta:
         serie, correlativo = numero.split("-", 1) if "-" in numero else ("0000", numero)
         estado_sunat, detalle = consulta_integrada.consultar_comprobante(
@@ -68,7 +78,8 @@ def preparar(empresa, ruc: str, tipo: str, numero: str,
                            ruc, tipo, numero, estado_sunat, detalle)
             return INDETERMINADO, f"{estado_sunat}: {detalle}"
 
-    if consultas.reiniciar_documento(empresa.bd_path, empresa.firma_dir, ruc, tipo, numero):
+    if consultas.reiniciar_documento(empresa.bd_path, empresa.firma_dir, ruc, tipo, numero,
+                                     estados=_ESTADOS_REINICIABLES + ("05",)):
         logger.info("%s %s-%s: estaba en estado %s; se limpia en SFS para reenviarlo.",
                     ruc, tipo, numero, previo["ind_situ"])
     return SEGUIR, ""

@@ -616,6 +616,29 @@ n_antes = len(enviados)
 r = client.post(f"/empresas/{RUC}/comprobantes", json=_cuerpo("F002-000026"))
 assert r.status_code == 201 and r.json()["estado"] == "anulado", r.text
 assert len(enviados) == n_antes, "un anulado por plazo no debe enviarse de nuevo"
+# 12i) '05' que dejó SFS tras un rechazo de SUNAT (3270), sin marca de plazo, en factura:
+# se pregunta a SUNAT; si no lo tiene, se limpia y se reenvía.
+_RECHAZO_3270 = "El precio unitario difiere de los cálculos Detalle: error: 3270 (nodo: \"cac:AlternativeConditionPrice/cbc:PriceAmount\")"
+_doc("01", "F002-000027", "05", _RECHAZO_3270)
+ci.consultar_comprobante = _falso(ci.NO_EXISTE)
+r = client.post(f"/empresas/{RUC}/comprobantes", json=_cuerpo("F002-000027"))
+assert r.status_code == 201 and r.json()["estado"] == "aceptado", r.text
+assert enviados[-1] == ("F002-000027", None), "el '05' de rechazo debió limpiarse antes de reenviar"
+
+# 12j) Ese mismo '05' pero SUNAT SÍ lo tiene (baja real de un aceptado): no se toca.
+_doc("01", "F002-000028", "05", _RECHAZO_3270)
+ci.consultar_comprobante = _falso(ci.ACEPTADO)
+n_antes = len(enviados)
+r = client.post(f"/empresas/{RUC}/comprobantes", json=_cuerpo("F002-000028"))
+assert r.status_code == 201 and r.json()["estado"] == "enviado", r.text
+assert len(enviados) == n_antes and _hay_doc("F002-000028") == ("05",)
+
+# 12k) '05' de rechazo y SUNAT sin confirmar: ante la duda, 502 y no se reenvía.
+_doc("01", "F002-000029", "05", _RECHAZO_3270)
+ci.consultar_comprobante = _falso(ci.DESCONOCIDO)
+r = client.post(f"/empresas/{RUC}/comprobantes", json=_cuerpo("F002-000029"))
+assert r.status_code == 502 and _hay_doc("F002-000029") == ("05",)
+ci.consultar_comprobante = _ci_original
 print("12. Reintentos: rechazado y error se reenvían; aceptado nunca; ante la duda no OK")
 
 # 13) Boleta > S/ 700: exige DNI o carné de extranjería válidos (distintos de 0).
