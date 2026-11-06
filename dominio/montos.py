@@ -24,6 +24,26 @@ def formatear_decimal(valor, decimales: int = 2) -> Decimal:
         return Decimal(0).quantize(Decimal(1).scaleb(-decimales))
 
 
+def formatear_cantidad(valor) -> str:
+    """
+    Cantidad para el .det: los decimales que trae (hasta 10, el máximo de UBL/SUNAT), y
+    mínimo 2 para no cambiar lo que ya salía (1 -> '1.00', 0.244 -> '0.244').
+
+    No se redondea a 2: SUNAT divide el importe de la línea entre la cantidad y lo compara
+    con el precio unitario. Con 0.0318 galones redondeado a 0.03, 0.77 / 0.03 = 25.67 contra
+    24.20 y salía el error 3270. Solo se nota con cantidades muy chicas.
+    """
+    try:
+        d = Decimal(str(valor)).quantize(Decimal("1e-10"), rounding=ROUND_HALF_UP)
+    except (InvalidOperation, ValueError, TypeError):
+        return "1.00"
+    if d == 0:
+        return "1.00"   # igual que antes: formatear_decimal(...) or Decimal("1")
+    texto = f"{d:.10f}".rstrip("0")
+    entero, decimales = texto.split(".")
+    return f"{entero}.{decimales.ljust(2, '0')}"
+
+
 def _base_e_igv(total):
     """
     Separa un importe con IGV incluido en base imponible e impuesto.

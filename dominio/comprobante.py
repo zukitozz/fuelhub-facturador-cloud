@@ -2,7 +2,7 @@
 import re
 
 from .texto import _texto, _campo_pipe
-from .montos import formatear_decimal
+from .montos import formatear_decimal, formatear_cantidad
 from .fechas import formatear_fecha_hora
 
 # Todos los parsers del SFS exigen 36 columnas en el detalle. Ojo con la nota de
@@ -44,7 +44,8 @@ def _validar_campos_obligatorios(comp: dict) -> list:
 
 def _linea_detalle(item: dict) -> str:
     """Una línea del archivo .det: las 36 columnas en el orden que lee el SFS."""
-    cant   = formatear_decimal(item.get("dec_cantidad") or item.get("cantidad_venta") or item.get("cantidad", 1))
+    # La cantidad NO se redondea a 2 decimales: ver formatear_cantidad.
+    cant   = formatear_cantidad(item.get("dec_cantidad") or item.get("cantidad_venta") or item.get("cantidad", 1))
     # Con 6 decimales, no 2: es lo que hace cuadrar cantidad × valor unitario
     # contra el valor de venta, que es lo que SUNAT verifica.
     v_unit = formatear_decimal(item.get("valor"), 6)
@@ -54,7 +55,7 @@ def _linea_detalle(item: dict) -> str:
 
     campos = [
         _campo_pipe(item.get("medida"), "NIU"),
-        f"{cant:.2f}",
+        cant,
         _campo_pipe(item.get("codigo_producto"), "-"),
         "-",
         _campo_pipe(item.get("descripcion"), "ITEM"),
