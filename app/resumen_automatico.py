@@ -33,7 +33,9 @@ from .reintentos import bloqueo
 logger = logging.getLogger(__name__)
 
 HORA_TEXTO = os.getenv("FACTURADOR_API_RESUMEN_HORA", "00:10")
-MAX_RESUMENES_POR_CORRIDA = 10   # fechas distintas pendientes: sobra, es un freno
+# Tope de resúmenes por corrida: cada uno lleva hasta 200 boletas, así que 20 = 4.000 boletas por
+# noche. Con 10 (2.000) una estación de ~1.400 boletas/día se atrasaba en los días fuertes.
+MAX_RESUMENES_POR_CORRIDA = 20
 
 HECHA, REINTENTANDO, MANUAL = "hecha", "reintentando", "manual"
 

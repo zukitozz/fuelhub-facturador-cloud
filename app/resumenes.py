@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 _LIMA = timezone(timedelta(hours=-5))
 
 MAX_BOLETAS_RESUMEN = 200
-MAX_RESUMENES_DIA = 20
+MAX_RESUMENES_DIA = 40   # freno contra bucles; debe quedar por encima de MAX_RESUMENES_POR_CORRIDA
 
 
 class SinPendientes(Exception):
