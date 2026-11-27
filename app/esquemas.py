@@ -4,7 +4,7 @@ dominio/comprobante.py (numeracion_comprobante, tipo_comprobante, etc.) a propó
 así el adaptador de facturador_api/archivos.py pasa el payload casi tal cual, sin
 una capa de traducción de nombres que solo agregaría una fuente más de bugs.
 """
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator
@@ -91,3 +91,87 @@ class EstadoComprobante(BaseModel):
     descripcion_error: Optional[str] = Field(None, description="Qué significa codigo_error, según el catálogo de SUNAT que lleva SFS; null si no hay código o no está en el catálogo")
     xml: Optional[str] = Field(None, description="XML UBL firmado, en texto plano; disponible desde que el comprobante se firmó (antes, null)")
     cdr: Optional[str] = Field(None, description="XML de la respuesta de SUNAT (CDR), en texto plano; solo en estados aceptados (antes se llamaba cdr_xml). Una boleta individual nunca lo tiene: es el del resumen (RC)")
+
+
+# --- Guías de remisión (GRE) -------------------------------------------------
+
+_TIPOS_GUIA = {"REMITENTE": "09", "TRANSPORTISTA": "31", "09": "09", "31": "31"}
+
+
+class ParteGuia(BaseModel):
+    tipo_documento: str = "6"
+    numero_documento: str
+    razon_social: str
+
+
+class TransportistaPublico(BaseModel):
+    numero_documento: str
+    razon_social: str
+    registro_mtc: Optional[str] = None
+
+
+class Direccion(BaseModel):
+    direccion: str
+    ubigeo: str
+    codigo_establecimiento: Optional[str] = None
+
+    @field_validator("ubigeo")
+    @classmethod
+    def _ubigeo(cls, v: str) -> str:
+        if not (v.isdigit() and len(v) == 6):
+            raise ValueError("ubigeo debe tener 6 dígitos")
+        return v
+
+
+class Conductor(BaseModel):
+    tipo_documento: str = "1"
+    numero_documento: str
+    nombres: str
+    apellidos: str
+    licencia: str
+
+
+class Vehiculo(BaseModel):
+    placa: str
+    tuc: Optional[str] = None
+
+
+class ItemGuia(BaseModel):
+    descripcion: str
+    cantidad: float = 1
+    medida: str = "NIU"
+    codigo_producto: Optional[str] = None
+
+
+class GuiaEntrada(BaseModel):
+    tipo_guia: str = Field(..., examples=["REMITENTE", "09", "TRANSPORTISTA", "31"])
+    numeracion: str = Field(..., examples=["T001-000001"])
+    fecha_emision: datetime
+    fecha_traslado: date
+    peso_bruto: float
+    unidad_peso: str = "KGM"
+    partida: Direccion
+    llegada: Direccion
+    conductor: Optional[Conductor] = None
+    vehiculo: Optional[Vehiculo] = None
+    items: list[ItemGuia]
+    observaciones: Optional[str] = None
+    # Solo 09
+    motivo_traslado: Optional[str] = None
+    modalidad_traslado: Optional[str] = None
+    proveedor: Optional[ParteGuia] = None
+    transportista: Optional[TransportistaPublico] = None
+    # 09 y 31
+    remitente: Optional[ParteGuia] = None
+    destinatario: Optional[ParteGuia] = None
+    # Solo 31
+    guia_remitente: Optional[str] = None
+    registro_mtc: Optional[str] = None
+
+    @field_validator("tipo_guia")
+    @classmethod
+    def _normalizar_tipo(cls, v: str) -> str:
+        codigo = _TIPOS_GUIA.get(v.strip().upper())
+        if codigo is None:
+            raise ValueError(f"tipo_guia {v!r} no reconocido (esperado REMITENTE/TRANSPORTISTA o 09/31)")
+        return codigo

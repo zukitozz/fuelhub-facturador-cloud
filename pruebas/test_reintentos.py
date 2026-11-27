@@ -305,7 +305,7 @@ ciclo()
 assert seg_rc("RC-20261020-003")["estado"] == "resuelto" and "T-3" not in consultas_ticket[antes:]
 print("13. Resúmenes: se resuelven solos, 127 -> manual, cerrados por otro camino OK")
 
-# 14) Plazo de 7 días: vencido y SUNAT no lo tiene -> anulado ('05') y no se reenvía; vencido
+# 14) Plazo de 3 días: vencido y SUNAT no lo tiene -> anulado ('05') y no se reenvía; vencido
 # pero SUNAT lo tiene -> resuelto; vencido sin confirmación -> no se anula; justo en el plazo -> normal.
 # El reloj falso corre en 1970: el "hoy" del plazo sale del reloj, no del sistema.
 import datetime as _dt
@@ -319,23 +319,23 @@ def con_fecha(numero, dias_atras):
 
 respuestas_sunat = {"000040": ci.NO_EXISTE, "000041": ci.ACEPTADO, "000042": ci.DESCONOCIDO, "000043": ci.NO_EXISTE}
 ci.consultar_comprobante = lambda emp, ruc, tipo, serie, numero, fecha, monto: (respuestas_sunat[numero], "x")
-for n, dias in (("F003-000040", 9), ("F003-000041", 9), ("F003-000042", 9), ("F003-000043", 7)):
+for n, dias in (("F003-000040", 9), ("F003-000041", 9), ("F003-000042", 9), ("F003-000043", 3)):
     con_fecha(n, dias)
 envios.clear()
 reintentos.observar(empresa)
 assert estado_sfs("F003-000040") == ("05",), "vencido y SUNAT no lo tiene: anulado en SFS"
 a = seguimiento("F003-000040")
-assert a["estado"] == "anulado" and "venció el plazo de 7 días" in a["motivo"] and "9 días" in a["motivo"], a
+assert a["estado"] == "anulado" and "venció el plazo de 3 días" in a["motivo"] and "9 días" in a["motivo"], a
 assert a["ultimo_error"] == "Could not send Message"
 assert estado_sfs("F003-000041") == ("06",) and seguimiento("F003-000041")["estado"] == "resuelto", "SUNAT lo tiene: no se anula"
 assert estado_sfs("F003-000042") == ("06",) and seguimiento("F003-000042")["estado"] == "activo", "sin confirmación de SUNAT: no se anula"
-assert estado_sfs("F003-000043") == ("06",) and seguimiento("F003-000043")["estado"] == "activo", "7 días justos: todavía en plazo"
+assert estado_sfs("F003-000043") == ("06",) and seguimiento("F003-000043")["estado"] == "activo", "3 días justos: todavía en plazo"
 assert envios == [], "nada de lo vencido se reenvía"
 assert any(e["codigo"] == "01-F003-000040" and e["estado"] == "anulado" for e in rechazos_mod.listar(RUC, origen="reintento"))
 reloj[0] += 11; ciclo()
 assert estado_sfs("F003-000040") == ("05",) and "F003-000040" not in envios
 assert [i["codigo"] for i in reintentos.listar(RUC, "anulado")] == ["01-F003-000040"]
-print("14. Plazo de 7 días: anula solo si venció y SUNAT no lo tiene OK")
+print("14. Plazo de 3 días: anula solo si venció y SUNAT no lo tiene OK")
 
 # 15) Un estado intermedio de SFS (01/02: el POST está regenerando la fila) NO cierra el seguimiento;
 # y si luego vuelve a fallar, el seguimiento sigue (no se pierde el reintento).

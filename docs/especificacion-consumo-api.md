@@ -2,6 +2,8 @@
 
 Referencia única para los sistemas que emiten comprobantes electrónicos de SUNAT (factura, boleta, nota de crédito, nota de débito) a través del servicio y consultan su estado. Reemplaza a las guías anteriores por empresa.
 
+> **Guías de remisión (GRE remitente `09` y transportista `31`):** se describen en la sección 9. El endpoint `POST /empresas/{ruc}/guias` ya existe, pero **todavía no se ha probado contra SUNAT con una guía real** (ver los pendientes al final): hasta entonces, probar primero con series de prueba.
+
 - **URL base (producción):** `https://facturador.peru-hub.com` (Swagger en `/docs`)
 - **Formato:** JSON sobre HTTPS, UTF-8.
 - **`{ruc}`:** el RUC emisor (11 dígitos). Va en la URL y el servicio enruta a la instancia de SFS de esa empresa. Un RUC no dado de alta responde `404`.
@@ -15,7 +17,7 @@ Desde esta versión el servicio **ya no depende de que quien emite vuelva a llam
 | **Resumen diario de boletas** | Todos los días a las 00:10 (hora de Lima), por empresa | **Dejar de llamar a `POST /resumenes-diarios`** y de depender de su respuesta (sección 3) |
 | **Cierre del resumen** (ticket de SUNAT) | Cada 2 minutos hasta que SUNAT responda | Ya no hay que consultar el resumen para cerrarlo |
 | **Reintento de comprobantes** que fallaron por un corte de SUNAT o de red | 5 intentos cada 10 min, pausa de 1 día, hasta 3 días | No hace falta reenviar a mano esos casos (sección 4) |
-| **Anulación por plazo** (7 días) | Si SUNAT no lo recibió en 7 días desde la emisión | El comprobante pasa a `anulado`; hay que emitir uno nuevo (sección 4) |
+| **Anulación por plazo** (3 días) | Si SUNAT no lo recibió en 3 días desde la emisión | El comprobante pasa a `anulado`; hay que emitir uno nuevo (sección 4) |
 
 Si ya tenían integrado el servicio, revisen la sección 3 (cambia dónde se ve la boleta ya declarada) y la 5 (consultas nuevas).
 
@@ -28,7 +30,7 @@ Si ya tenían integrado el servicio, revisen la sección 3 (cambia dónde se ve 
 5. **El éxito se decide por el campo `estado`, no por el HTTP.** Un comprobante rechazado por SUNAT también responde `201`.
 6. **Para reintentar se reenvía el mismo número.** Nunca un número nuevo para reintentar un error, un `502` o un timeout: se salta un correlativo o se duplica.
 7. **El `xml` y el `cdr` se guardan sin reformatear.** Si cambia un solo espacio, la firma deja de validar.
-8. **Plazo de envío de 7 días.** SUNAT solo recibe un comprobante hasta 7 días después de su emisión. Pasado ese plazo ya no se puede enviar (sección 4). Emitir y reintentar dentro de plazo.
+8. **Plazo de envío de 3 días.** Un comprobante (de cualquier tipo) solo se envía hasta 3 días después de su emisión. Pasado ese plazo ya no se envía y se anula (sección 4). Emitir y reintentar dentro de plazo.
 9. **No mandar notas de crédito ni de débito sobre una boleta hasta que el resumen de esa boleta esté `aceptado`.** SUNAT rechaza con `2119` ("el comprobante … no fue informado") la nota que llega antes, y ese número queda registrado como rechazado (sección 3).
 
 ## 1. Emitir: `POST /empresas/{ruc}/comprobantes`
@@ -116,7 +118,7 @@ POST /empresas/{ruc}/comprobantes?incluir=xml
 | `pendiente`, `validando` | En proceso | Consultar con `GET` más tarde |
 | `rechazado` | SUNAT lo rechazó (`codigo_error` explica) | Si es por contenido, corregir el dato y reenviar el mismo número. Si es una caída de SUNAT, la API lo reintenta sola (sección 4) |
 | `error` | SFS no pudo firmar o generar, o hubo un corte al enviar | Reintentar el mismo número, o esperar el reintento automático |
-| `anulado` | Anulado. También lo deja la API cuando venció el plazo de 7 días y SUNAT no lo recibió | Final. Si corresponde, emitir uno nuevo dentro de plazo |
+| `anulado` | Anulado. También lo deja la API cuando venció el plazo de 3 días y SUNAT no lo recibió | Final. Si corresponde, emitir uno nuevo dentro de plazo |
 
 ## 2. Consultar: `GET /empresas/{ruc}/comprobantes/{codigo}`
 
@@ -138,7 +140,7 @@ La boleta **nunca se envía sola a SUNAT**: queda `generado` y se informa en un 
 - Todos los días a las **00:10 (hora de Lima)** arma y envía, por empresa, **un resumen por cada fecha pendiente** (un resumen declara una sola fecha; máximo 200 boletas). Incluye solo boletas de días anteriores; las de hoy esperan al día siguiente.
 - Resuelve el ticket de SUNAT solo, cada 2 minutos, y deja el CDR. No hay que consultar el resumen para cerrarlo.
 - Si SFS está caído, reintenta cada 10 minutos hasta 5 veces ese día; si no, lo deja para intervención manual (sección 5) y vuelve a intentarlo al día siguiente.
-- **Anula** las boletas pendientes que ya superaron el plazo de 7 días (si no, SUNAT rechazaría el resumen entero por la fecha vencida).
+- **Anula** las boletas pendientes que ya superaron el plazo de 3 días (si no, SUNAT rechazaría el resumen entero por la fecha vencida).
 
 ### Qué hace quien emite
 
@@ -178,7 +180,7 @@ SUNAT solo acepta una nota sobre una boleta que ya declaró en un resumen. La AP
 2. Mandar la nota solo si responde `estado: "aceptado"` (su `des_obse` dice "Declarada en el resumen RC-…: Aceptado").
 3. Si responde `generado`, `enviado` o `404`, todavía no está declarada: volver a consultar más tarde. Si `rechazado`, `error` o `anulado`, no mandar la nota y avisar a soporte.
 
-Como el resumen de las boletas de un día sale a las 00:10 de uno o dos días después, una nota sobre una boleta reciente tardará en poder enviarse. El plazo de 7 días corre desde la emisión de la nota, así que hay margen, pero no conviene dejarlo para el último día. Esto no aplica a notas sobre facturas, que se pueden mandar apenas la factura queda `aceptado`.
+Como el resumen de las boletas de un día sale a las 00:10 de uno o dos días después, una nota sobre una boleta reciente tardará en poder enviarse. El plazo de 3 días corre desde la emisión de la nota y el resumen de la boleta puede tardar uno o dos días, así que **el margen es corto**: emitir la nota cuanto antes. Si no alcanza, queda anulada por plazo. Esto no aplica a notas sobre facturas, que se pueden mandar apenas la factura queda `aceptado`.
 
 Si la nota se mandó antes de tiempo y quedó rechazada con `2119`, esperar a que la boleta quede `aceptado` y reenviar el mismo número una vez. Si SUNAT sigue respondiendo "ya informado … rechazado", emitir la nota con un número nuevo.
 
@@ -189,7 +191,7 @@ Si la nota se mandó antes de tiempo y quedó rechazada con `2119`, esperar a qu
 | `aceptado` | Marcar la boleta como declarada. Guardar el `cdr` si lo archivan |
 | `enviado` | Esperar: la API consulta el ticket sola. Volver a preguntar más tarde |
 | `rechazado` / `error` | **Intervención manual.** El resumen figura en `GET /empresas/{ruc}/reintentos?estado=manual` con las boletas que llevaba. Decidir si reencolar o anular |
-| `anulado` | Pasó el plazo de 7 días sin declararse. Tratarla como anulada y emitir una nueva si corresponde |
+| `anulado` | Pasó el plazo de 3 días sin declararse. Tratarla como anulada y emitir una nueva si corresponde |
 
 ## 4. Reintentos, plazo e idempotencia
 
@@ -219,9 +221,9 @@ Cada minuto la API revisa los comprobantes en `error` o `rechazado` y los clasif
 - Necesita los archivos del comprobante guardados en la API; si faltan, pasa a `manual` y hay que reenviarlo desde el sistema de origen.
 - Un `manual` que se corrige y se reenvía bien (con el `POST`) pasa solo a `resuelto`.
 
-### Plazo de 7 días
+### Plazo de 3 días
 
-Si pasaron más de 7 días desde la emisión y el comprobante sigue sin llegar a SUNAT, **la API lo anula** (`estado: "anulado"`, con el motivo en `des_obse`) y deja de reenviarlo. Antes de anular consulta a SUNAT: si SUNAT ya lo tiene, queda `resuelto`; si no pudo confirmar, no anula nada.
+Si pasaron más de 3 días desde la emisión y el comprobante sigue sin llegar a SUNAT, **la API lo anula** (`estado: "anulado"`, con el motivo en `des_obse`) y deja de reenviarlo. Antes de anular consulta a SUNAT: si SUNAT ya lo tiene, queda `resuelto`; si no pudo confirmar, no anula nada.
 
 La anulación es **solo interna**: no se comunica nada a SUNAT, que nunca recibió el comprobante. Quien lo emitió debe reemplazarlo por uno nuevo dentro de plazo. Lo mismo rige para boletas pendientes (sección 3).
 
@@ -280,10 +282,136 @@ El formato de error es `{"detail": "texto"}`. En un `422` de campos, `detail` es
 - [ ] **Conciliar boletas** con `GET /resumenes` o con el `GET` de cada boleta; dejar de tratar `404` como "ya declarada".
 - [ ] **No mandar notas sobre boletas hasta que la boleta figure `aceptado`** (consultar `GET /comprobantes/03-{numeración}`).
 - [ ] Reintentar siempre con el mismo número.
-- [ ] Emitir y reenviar dentro del plazo de 7 días.
+- [ ] Emitir y reenviar dentro del plazo de 3 días.
 - [ ] Revisar a diario `GET /reintentos?estado=manual`.
 
+## 9. Guías de remisión (GRE)
+
+Esta sección define cómo se emiten la **GRE remitente (`09`)** y la **GRE transportista (`31`)** por este servicio. Está pensada para reemplazar el envío por Mifact que hoy hace `fuelhub-go`, conservando el mismo orden de emisión.
+
+### 9.1 Secuencia de un despacho (como la hace hoy fuelhub-go)
+
+Un despacho de `fuelhub-go` emite hasta tres documentos, **en este orden y cada uno depende del anterior**:
+
+| Paso | Documento | Emite bajo el RUC de | Serie hoy | Depende de |
+|---|---|---|---|---|
+| 1 | **GRE remitente `09`**, motivo `02` (compra) | el **grifo destino** (remitente y destinatario son el mismo) | `T001` | — |
+| 2 | **GRE transportista `31`** | el **transportista** | `VG01` | la numeración de la `09` |
+| 3 | **Factura de flete `01`** (servicio de transporte al grifo) | el **transportista** | `F001` | la numeración de la `31` |
+
+- Los documentos van a RUC distintos: el paso 1 a `/empresas/{ruc del grifo}/…` y los pasos 2 y 3 a `/empresas/{ruc del transportista}/…`. Cada RUC debe estar dado de alta en el servicio, con sus credenciales de guías (sección 9.5).
+- **Qué documentos emitir y en qué orden lo decide el sistema cliente.** Este servicio no distingue tipos de cliente: procesa cada comprobante o guía que llega para un RUC dado de alta. Si un despacho no lleva `09` (por ejemplo, porque el grifo no emite guía remitente), el cliente simplemente no la manda.
+- Si un paso falla, **la secuencia se detiene ahí**. Los pasos anteriores ya emitidos **no se vuelven a enviar**: se reanuda desde el paso que falló, reutilizando la numeración ya obtenida.
+- Antes de mandar un paso hay que **esperar a que el anterior esté `aceptado`** (consultar con `GET`), igual que con las notas sobre boletas (sección 3). SUNAT no acepta una `31` que referencia una `09` que no registró.
+
+### 9.2 Emitir una guía: `POST /empresas/{ruc}/guias`
+
+**Cómo funciona por dentro (distinto de las facturas):** las guías **no pasan por SFS**. El servicio arma el XML UBL 2.1 `DespatchAdvice`, lo firma con el certificado (`.p12`) de la empresa y lo envía a la API REST de guías de SUNAT (`api-cpe.sunat.gob.pe`, con token OAuth). El estado se guarda en el propio servicio.
+
+Mismas reglas de siempre: `numeracion` la manda quien emite, el mismo número para reintentar, fecha en hora de Lima, el éxito se decide por `estado` y no por el HTTP (secciones 0 y 4). `?incluir=xml,cdr` funciona igual.
+
+**Cuerpo común (`09` y `31`)**
+
+| Campo | Tipo | Oblig. | Notas |
+|---|---|---|---|
+| `tipo_guia` | string | sí | `REMITENTE` o `TRANSPORTISTA` (o `09`, `31`) |
+| `numeracion` | string | sí | `SERIE-CORRELATIVO`. Serie de remitente `T…`, de transportista `V…` |
+| `fecha_emision` | datetime ISO | sí | Hora de Lima |
+| `fecha_traslado` | fecha | sí | Inicio del traslado (`AAAA-MM-DD`) |
+| `peso_bruto` | número | sí | Total del traslado |
+| `unidad_peso` | string | no | Por defecto `KGM` |
+| `partida` | objeto | sí | `direccion`, `ubigeo` (6 dígitos). Opcional `codigo_establecimiento` |
+| `llegada` | objeto | sí | `direccion`, `ubigeo` |
+| `conductor` | objeto | según caso | `tipo_documento`, `numero_documento`, `nombres`, `apellidos`, `licencia`. **Obligatorio en la `31` y en la `09` con modalidad `02`**; en la `09` con modalidad `01` (transporte público) **no se informa**: si se manda, se ignora |
+| `vehiculo` | objeto | según caso | `placa`. Opcional `tuc` (tarjeta única de circulación). Mismas reglas que `conductor` |
+| `items` | lista | sí | Ver abajo |
+| `observaciones` | string | no | |
+
+**`items[]`:** `descripcion` (obligatorio), `cantidad`, `medida` (por defecto `NIU`; combustible en galones: `GLL`), `codigo_producto` opcional. Una guía **no lleva importes**.
+
+**Solo `09` (remitente)**
+
+| Campo | Oblig. | Notas |
+|---|---|---|
+| `motivo_traslado` | sí | Código del catálogo 20. Este flujo usa `02` (compra) |
+| `remitente` | sí | `tipo_documento`, `numero_documento`, `razon_social`. En el flujo actual es el grifo. **Su `numero_documento` debe ser el RUC de la URL** (el emisor de la `09` es el remitente); si no, `422` |
+| `destinatario` | sí | Igual que arriba. En el flujo actual es el mismo grifo |
+| `proveedor` | sí si `motivo_traslado` = `02` | Quien vende (la planta / mayorista). Mismos tres campos |
+| `modalidad_traslado` | sí | `01` transporte público o `02` privado |
+| `transportista` | si modalidad `01` | `numero_documento` (RUC), `razon_social`, `registro_mtc` |
+
+**Solo `31` (transportista)**
+
+| Campo | Oblig. | Notas |
+|---|---|---|
+| `remitente` | sí | Quien envía la carga |
+| `destinatario` | sí | Quien la recibe (el grifo) |
+| `guia_remitente` | no | Numeración de la `09` asociada, ej. `T001-000123`. Si el cliente no la manda, la `31` se emite sin ella (SUNAT la validará) |
+| `registro_mtc` | sí | Registro MTC del transportista |
+
+La correspondencia con los datos que hoy maneja `fuelhub-go`: `conductor.nombres` se separa en `nombres` y `apellidos`; `vehiculo.tuc` va en `vehiculo.tuc`; `conductor.nro_registro_mtc` va como `registro_mtc` del transportista; `planta_origen` es `partida` y `grifo_destino` es `llegada`; cada producto del pedido es un ítem, con descripción `{descripción SUNAT} SCOP {código SCOP}`.
+
+### 9.3 Ejemplo: GRE remitente (compra)
+
+```json
+POST /empresas/{ruc del grifo}/guias
+{
+  "tipo_guia": "REMITENTE",
+  "numeracion": "T001-000001",
+  "fecha_emision": "2026-11-26T10:30:00",
+  "fecha_traslado": "2026-11-26",
+  "motivo_traslado": "02",
+  "modalidad_traslado": "01",
+  "peso_bruto": 6155,
+  "remitente":    {"tipo_documento": "6", "numero_documento": "20111111111", "razon_social": "GRIFO SAC"},
+  "destinatario": {"tipo_documento": "6", "numero_documento": "20111111111", "razon_social": "GRIFO SAC"},
+  "proveedor":    {"tipo_documento": "6", "numero_documento": "20100011884", "razon_social": "PLANTA SA"},
+  "transportista": {"numero_documento": "20222222222", "razon_social": "TRANSPORTES SAC", "registro_mtc": "MTC-123"},
+  "partida": {"ubigeo": "150101", "direccion": "AV. PLANTA 100"},
+  "llegada": {"ubigeo": "150115", "direccion": "AV. GRIFO 200"},
+  "conductor": {"tipo_documento": "1", "numero_documento": "12345678", "nombres": "JUAN", "apellidos": "PEREZ", "licencia": "Q12345678"},
+  "vehiculo": {"placa": "ABC123", "tuc": "TUC-001"},
+  "items": [{"descripcion": "DIESEL B5 SCOP 123", "cantidad": 1900, "medida": "GLL"}]
+}
+```
+
+### 9.4 Respuesta, estados y consulta
+
+La respuesta tiene la misma forma que la de un comprobante (sección 1) y se consulta con **`GET /empresas/{ruc}/comprobantes/{codigo}`**, donde `codigo` es `09-T001-000001` o `31-VG01-000001`. Los estados son los mismos de la sección 1 y las reglas de las secciones 4 y 5 aplican igual (reintento automático, `reintentos?estado=manual`, `rechazos`).
+
+Diferencias con una factura:
+
+- **El envío de SUNAT es asíncrono (por ticket).** Lo normal es que el `POST` devuelva `enviado` o `pendiente` y el CDR llegue después; **hay que consultar con `GET` hasta `aceptado`** antes de pasar al paso siguiente. No hay resumen diario: las guías se informan una por una.
+- No se calcula IGV ni totales: no existen `total`, `gravadas` ni `igv`.
+- El plazo de 3 días de la sección 4 aplica igual a las guías.
+
+**Respuestas de error propias de las guías:** `422` si el payload no cumple las reglas (serie `T…`/`V…`, remitente igual al emisor, campos según modalidad); `409` si la empresa no tiene configuradas las credenciales de guías o el certificado, o SUNAT no acepta las credenciales; `502` si SUNAT no responde (se reenvía el mismo número). Un rechazo de SUNAT (por ejemplo, serie no habilitada) responde `201` con `estado: rechazado` y `codigo_error`. Reenviar el mismo número de una guía `rechazada` o con `error` la envía de nuevo; una `aceptada`, `enviada` o `anulada` **no** se reenvía (se devuelve su estado).
+
+### 9.5 Requisitos por empresa
+
+Además del usuario SOL secundario de la sección 0, cada RUC que emita guías necesita:
+
+- **Credenciales de la API de guías** (`client_id` y `client_secret`), generadas por la propia empresa en SOL. Sin ellas SUNAT no entrega el token. En `empresas.yaml` van como `sol_client_id` y `sol_client_secret`, junto con `sol_usuario` y `sol_clave`.
+- **Certificado digital** (`.p12`) para firmar. Por defecto se usa el que ya tiene SFS en `CERT/certificado.p12`; su clave va en `empresas.yaml` como `certificado_clave` (y `certificado_ruta` si está en otro lugar).
+- **Series de guía** habilitadas (`T…` para remitente, `V…` para transportista).
+- Datos del emisor completos en SFS: ubigeo, dirección, departamento, provincia y distrito.
+- Cada RUC que emita (grifo, transportista o quien sea) debe estar **dado de alta** en el servicio. Un RUC no dado de alta responde `404`.
+
+### 9.6 Qué no cambia para quien ya usa `fuelhub-go`
+
+Todo lo que hoy decide la app: el orden `09` → `31` → factura, cuándo omitir la `09`, la reanudación desde el paso fallido sin reenviar lo ya emitido, y la regla de **no reemitir nunca un comprobante que ya tiene numeración**. **Esa lógica sigue viviendo en el sistema cliente**; este servicio solo procesa lo que recibe. Cambia solo el destino: en vez de Mifact, las llamadas van a este servicio, y la espera de cada paso se hace con `GET` en lugar de depender de la respuesta inmediata.
+
+La **factura de flete** se emite igual que cualquier factura (sección 1). El vínculo con la `31` hoy viaja como referencia en Mifact; este servicio todavía **no tiene un campo para relacionar una factura con una guía** (ver pendientes).
+
 ## Pendientes conocidos
+
+- Guías (sección 9): implementadas pero **sin probar contra SUNAT**. Por confirmar con la primera guía real:
+  - Que SUNAT acepte el XML generado (el orden y los roles del `DespatchAdvice` están hechos según el manual de GRE, sin validar contra el servicio): en particular el rol del remitente y del transportista en la `31`, y dónde va la TUC.
+  - Las guías **no tienen reintento automático** (los de la sección 4 son solo de facturas y notas): si el envío falla por red hay que reenviar el mismo número, y una `enviada` se resuelve consultando el `GET`.
+  - Las guías no figuran en `GET /reintentos` ni `GET /resumenes`; sus rechazos sí aparecen en `GET /rechazos`.
+  - Quién asigna el correlativo: hoy `fuelhub-go` lo recibe de Mifact; con este servicio lo manda quien emite, como en las facturas.
+  - Un campo para relacionar la factura de flete con la `31`.
+  - Los campos mínimos exactos que valida SUNAT para el tipo de transporte (público y privado) y para la `31` sin `09`.
 
 - Autenticación: hoy no hay ninguna; el mecanismo está por definir.
 - Un comprobante `rechazado` aún no devuelve CDR en el `GET`.

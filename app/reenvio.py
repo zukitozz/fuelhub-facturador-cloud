@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 SEGUIR = "seguir"                  # flujo normal (tras limpiar la fila, si hacía falta)
 YA_EN_SUNAT = "ya_en_sunat"        # SUNAT ya lo tiene: no reenviar
 INDETERMINADO = "indeterminado"    # no se pudo verificar: no reenviar
-ANULADO_POR_PLAZO = "anulado_por_plazo"   # venció el plazo de 7 días y se anuló: no reenviar
+ANULADO_POR_PLAZO = "anulado_por_plazo"   # venció el plazo de envío (3 días) y se anuló: no reenviar
 MARCA_VENCIDO = "venció el plazo"          # texto que deja reintentos.py en DES_OBSE al anular
 
 _ESTADOS_REINICIABLES = ("06", "10")

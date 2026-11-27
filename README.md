@@ -290,7 +290,7 @@ comprobante: si lo tiene, se da por resuelto y no se manda de nuevo; si no pudo 
 cuenta como intento fallido y no se envía a ciegas. Un solo envío a la vez por comprobante:
 el reintento cede si en ese momento está entrando el `POST` de quien factura.
 
-**Plazo de envío (7 días).** SUNAT solo recibe un comprobante hasta 7 días después de su emisión
+**Plazo de envío (3 días).** Un comprobante solo se envía hasta 3 días después de su emisión
 (`FACTURADOR_API_PLAZO_ENVIO_DIAS`). Pasado el plazo, a una factura o nota que sigue en
 `error`/`rechazado` se le pregunta a SUNAT: si **ya la tiene**, queda `resuelto`; si **no la
 tiene**, se **anula** (`IND_SITU='05'` en SFS, con el motivo en `des_obse`, y estado `anulado` en
@@ -330,7 +330,7 @@ medianoche de Lima (`FACTURADOR_API_RESUMEN_HORA`, por defecto `00:10`; código 
 `POST /empresas/{ruc}/resumenes-diarios`: el endpoint sigue existiendo y es compatible (si alguien
 lo llama de más responde "No hay boletas…").
 
-Cada corrida, por empresa: (1) **anula** las boletas pendientes cuyo plazo de 7 días venció (un
+Cada corrida, por empresa: (1) **anula** las boletas pendientes cuyo plazo de 3 días venció (un
 resumen declara una sola fecha y SUNAT lo rechazaría entero); (2) arma y envía **un resumen por
 cada fecha pendiente**; (3) deja el resumen que SFS dé en error o rechazado en `/reintentos` como
 `manual`. Si la corrida falla (SFS caído) se repite cada 10 min, hasta 5 veces ese día, y si no

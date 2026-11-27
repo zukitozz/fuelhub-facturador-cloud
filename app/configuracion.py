@@ -53,6 +53,15 @@ class Empresa:
     # si faltan se usan las globales de credenciales_consulta(). No son la clave SOL.
     sol_client_id: str = ""
     sol_client_secret: str = ""
+    # Guías de remisión (app/guias.py): se firman acá con el .p12 de la empresa, no en SFS.
+    # certificado_ruta por defecto es el que SFS ya tiene en CERT/. La clave en texto plano,
+    # igual que sol_clave (SFS guarda la suya encriptada y no se puede reusar).
+    certificado_ruta: str = ""
+    certificado_clave: str = ""
+
+    @property
+    def certificado_p12(self) -> str:
+        return self.certificado_ruta or os.path.join(self.ruta_base, "sunat_archivos", "sfs", "CERT", "certificado.p12")
 
     @property
     def vali_dir(self) -> str:
@@ -101,6 +110,8 @@ def _cargar() -> dict:
             sol_clave=cfg.get("sol_clave", ""),
             sol_client_id=cfg.get("sol_client_id", ""),
             sol_client_secret=cfg.get("sol_client_secret", ""),
+            certificado_ruta=cfg.get("certificado_ruta", ""),
+            certificado_clave=str(cfg.get("certificado_clave", "")),
         )
     return empresas
 

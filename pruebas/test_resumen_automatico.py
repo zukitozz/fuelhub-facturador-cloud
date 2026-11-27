@@ -118,10 +118,15 @@ reloj[0] += 86400
 boleta("B001-000010", 1); boleta("B001-000011", 9)
 enviados.clear()
 auto.ciclo_empresa(empresa)
-assert fila("03", "B001-000011")[0] == "05" and "venció el plazo de 7 días" in fila("03", "B001-000011")[1]
+assert fila("03", "B001-000011")[0] == "05" and "venció el plazo de 3 días" in fila("03", "B001-000011")[1]
 assert [i["codigo"] for i in reintentos.listar(RUC, "anulado")] == ["03-B001-000011"]
 assert len(enviados) == 1 and "B001-000011" not in sum((r["boletas"] for r in registro.listar(RUC)), [])
 print("5. Boleta vencida: anulada y fuera del resumen OK")
+
+# Desde aquí el reloj falso se adelanta un día por paso, pero resumenes.py sigue usando la fecha real para
+# decidir qué boletas son "de hoy". Con el plazo de 3 días las boletas de los pasos 6-8 vencerían por el
+# reloj del test; se amplía el plazo para que estos pasos prueben los reintentos del resumen, no el plazo.
+reintentos.PLAZO_ENVIO_DIAS = 10
 
 # 6) SFS caído: reintenta cada 10 min, 3 veces como máximo ese día, y deja el caso en manual.
 reloj[0] += 86400

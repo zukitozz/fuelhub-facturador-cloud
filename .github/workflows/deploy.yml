@@ -19,6 +19,7 @@ jobs:
       - run: python pruebas/test_mantenimiento.py
       - run: python pruebas/test_reintentos.py
       - run: python pruebas/test_resumen_automatico.py
+      - run: python pruebas/test_guias.py
 
   desplegar:
     needs: pruebas

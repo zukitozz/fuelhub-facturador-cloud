@@ -34,6 +34,12 @@ empresas:
     ruta_base: /home/ubuntu/sfs
     sol_usuario: FACTURA1
     sol_clave: "claveDeEjemplo"
+    # Solo para guías de remisión (app/guias.py), que se firman y envían sin pasar por SFS:
+    # credenciales de la API de SUNAT de ESA empresa y la clave de su certificado .p12
+    # (por defecto <ruta_base>/sunat_archivos/sfs/CERT/certificado.p12; certificado_ruta lo cambia).
+    # sol_client_id: "client-id-de-la-empresa"
+    # sol_client_secret: "client-secret-de-la-empresa"
+    # certificado_clave: "claveDelP12"
 
   # Ejemplo de una segunda empresa, una vez dada de alta:
   # "20XXXXXXXXX":

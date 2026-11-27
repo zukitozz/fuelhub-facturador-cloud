@@ -62,7 +62,7 @@ ESPERA_RESUMEN_SEG = _entero_de_entorno("FACTURADOR_API_REINTENTOS_ESPERA_RESUME
 TIPO_RESUMEN = "RC"
 # Días desde la emisión durante los que SUNAT recibe el comprobante. Pasado el plazo, si
 # SUNAT no lo tiene, ya no hay forma de enviarlo: se da por anulado.
-PLAZO_ENVIO_DIAS = _entero_de_entorno("FACTURADOR_API_PLAZO_ENVIO_DIAS", 7)
+PLAZO_ENVIO_DIAS = _entero_de_entorno("FACTURADOR_API_PLAZO_ENVIO_DIAS", 3)
 
 ACTIVO, MANUAL, RESUELTO, ANULADO = "activo", "manual", "resuelto", "anulado"
 

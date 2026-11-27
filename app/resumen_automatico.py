@@ -9,7 +9,7 @@ llama de más, solo responde que no hay nada que resumir (un candado por empresa
 se crucen).
 
 Qué hace cada corrida de una empresa:
-  1. Boletas pendientes cuyo plazo de envío venció (PLAZO_ENVIO_DIAS, 7) se anulan: un RC
+  1. Boletas pendientes cuyo plazo de envío venció (PLAZO_ENVIO_DIAS, 3) se anulan: un RC
      declara una sola fecha de referencia, y SUNAT rechaza el resumen entero si esa fecha
      está fuera de plazo; una boleta vencida no se puede salvar, así que no arrastra a las
      demás. Quedan anuladas en SFS y en /reintentos (estado anulado).

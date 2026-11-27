@@ -610,7 +610,7 @@ assert not os.path.exists(xml_viejo)
 ci.consultar_comprobante = _ci_original
 # 12h) Anulado por plazo vencido ('05'): un POST posterior no lo reenvía ni lo regenera
 # (si no, vuelve a error y el reintento lo anula otra vez, en bucle).
-_doc("01", "F002-000026", "05", "Anulado: venció el plazo de 7 días para enviarlo a SUNAT (emitido el 01/10/2026, 20 días) y SUNAT no lo tiene")
+_doc("01", "F002-000026", "05", "Anulado: venció el plazo de 3 días para enviarlo a SUNAT (emitido el 01/10/2026, 20 días) y SUNAT no lo tiene")
 ci.consultar_comprobante = _ci_no_debe_llamarse
 n_antes = len(enviados)
 r = client.post(f"/empresas/{RUC}/comprobantes", json=_cuerpo("F002-000026"))

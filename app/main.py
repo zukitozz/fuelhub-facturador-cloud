@@ -15,8 +15,8 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 
-from . import archivos, ciclo, configuracion, consulta_integrada, consultas, estados, qr, rechazos, registro_resumenes, reenvio, reintentos, resumenes, sfs_cliente, simulado, ticket_resumen
-from .esquemas import ComprobanteAceptado, ComprobanteEntrada, EstadoComprobante
+from . import archivos, ciclo, configuracion, consulta_integrada, consultas, estados, guias, qr, rechazos, registro_resumenes, reenvio, reintentos, resumenes, sfs_cliente, simulado, ticket_resumen
+from .esquemas import ComprobanteAceptado, ComprobanteEntrada, EstadoComprobante, GuiaEntrada
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -52,7 +52,7 @@ async def _registrar_validacion(request: Request, exc: RequestValidationError):
     cada sistema. Solo para empresas dadas de alta: con cualquier otro RUC cualquiera
     podría llenar el archivo de basura."""
     ruc = request.path_params.get("ruc")
-    if (request.method == "POST" and request.url.path.endswith("/comprobantes")
+    if (request.method == "POST" and request.url.path.endswith(("/comprobantes", "/guias"))
             and ruc and configuracion.obtener_empresa(ruc)):
         cuerpo = exc.body if isinstance(exc.body, dict) else {}
         errores = [
@@ -60,7 +60,7 @@ async def _registrar_validacion(request: Request, exc: RequestValidationError):
             for e in exc.errors()
         ]
         rechazos.registrar(
-            ruc, str(cuerpo.get("numeracion_comprobante") or "(sin numeración)"), "invalido",
+            ruc, str(cuerpo.get("numeracion_comprobante") or cuerpo.get("numeracion") or "(sin numeración)"), "invalido",
             "; ".join(f"{e['campo']}: {e['msg']}" for e in errores), "validacion", detalle=errores,
         )
     return await request_validation_exception_handler(request, exc)
@@ -117,6 +117,34 @@ def crear_comprobante(
     # con este POST (ver app/reintentos.py).
     with reintentos.bloqueo(ruc, f"{comprobante.tipo_comprobante}-{comprobante.numeracion_comprobante}"):
         return _procesar_comprobante(empresa, ruc, comprobante, pedido)
+
+
+@app.post(
+    "/empresas/{ruc}/guias",
+    response_model=ComprobanteAceptado,
+    status_code=201,
+)
+def crear_guia(
+    ruc: str,
+    guia: GuiaEntrada,
+    incluir: Optional[str] = Query(
+        None, description="xml y/o cdr, separados por coma: adjunta el XML firmado y/o el CDR en la respuesta"),
+):
+    """GRE remitente (09) o transportista (31): se firma y se envía directo a la API de guías
+    de SUNAT (no pasa por SFS). El envío es asíncrono: lo normal es `enviado`; el veredicto se
+    consulta con GET /comprobantes/{09|31}-{numeración}. Ver app/guias.py."""
+    pedido = _incluir_o_400(incluir)
+    empresa = _empresa_o_404(ruc)
+    codigo = f"{guia.tipo_guia}-{guia.numeracion}"
+    try:
+        with reintentos.bloqueo(ruc, codigo):
+            fila = guias.emitir(empresa, guia)
+    except guias.GuiaInvalida as e:
+        rechazos.registrar(ruc, codigo, "invalido", str(e), "validacion")
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    except guias.GuiaNoEnviable as e:
+        raise HTTPException(status_code=e.http, detail=str(e)) from e
+    return guias.a_aceptado(fila, pedido)
 
 
 def _procesar_comprobante(empresa, ruc: str, comprobante: ComprobanteEntrada, pedido: set) -> ComprobanteAceptado:
@@ -262,6 +290,13 @@ def consultar_comprobante(ruc: str, codigo: str):
         return simulado.consultar(codigo)
     empresa = _empresa_o_404(ruc)
     tipo, numero = codigo.split("-", 1)
+
+    if guias.es_guia(codigo):
+        # Las guías no viven en SFS: su estado está en app/registro_guias.py.
+        fila = guias.consultar(empresa, codigo)
+        if fila is None:
+            raise HTTPException(status_code=404, detail=f"No existe la guía {codigo} para el RUC {ruc}.")
+        return guias.a_estado(fila)
 
     estado_sfs = consultas.consultar_estado(empresa.bd_path, ruc, tipo, numero)
     if estado_sfs is None:
