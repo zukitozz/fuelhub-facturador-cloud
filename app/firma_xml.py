@@ -14,7 +14,10 @@ está declarado en la raíz.
 import base64
 import hashlib
 import os
+import re
+import subprocess
 
+from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives.serialization import pkcs12
@@ -31,6 +34,37 @@ class CertificadoError(Exception):
     """No se pudo leer el certificado (falta, clave incorrecta, sin llave privada)."""
 
 
+def _cargar_con_openssl(ruta: str, clave: str):
+    """Los .p12 de SUNAT/certificadoras suelen venir con cifrado antiguo (RC2-40) que la
+    librería no abre con OpenSSL 3. El binario openssl sí, con -legacy: se le pide el PEM y
+    se carga de ahí. La clave pasa por variable de entorno, nunca por la línea de comandos."""
+    r = None
+    # -legacy existe desde OpenSSL 3; en versiones anteriores ese cifrado ya se abre sin él.
+    for extra in (["-legacy"], []):
+        try:
+            r = subprocess.run(
+                ["openssl", "pkcs12", *extra, "-in", ruta, "-nodes", "-passin", "env:CLAVE_P12"],
+                capture_output=True, env={**os.environ, "CLAVE_P12": clave or ""}, timeout=20)
+        except (OSError, subprocess.SubprocessError) as e:
+            raise CertificadoError(f"No se pudo abrir el certificado con openssl: {e}") from e
+        if r.returncode == 0:
+            break
+    if r.returncode != 0:
+        raise CertificadoError(f"No se pudo abrir el certificado {os.path.basename(ruta)} (¿clave incorrecta?)")
+    texto = r.stdout.decode("utf-8", errors="replace")
+    llaves = re.findall(r"-----BEGIN (?:\w+ )?PRIVATE KEY-----.*?-----END (?:\w+ )?PRIVATE KEY-----", texto, re.S)
+    certs = re.findall(r"-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----", texto, re.S)
+    if not llaves or not certs:
+        raise CertificadoError(f"El certificado {os.path.basename(ruta)} no trae llave privada y certificado.")
+    llave = serialization.load_pem_private_key(llaves[0].encode(), None)
+    publica = llave.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
+    for pem in certs:  # el de la llave; los demás son la cadena
+        cert = x509.load_pem_x509_certificate(pem.encode())
+        if cert.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo) == publica:
+            return llave, cert
+    raise CertificadoError(f"Ningún certificado de {os.path.basename(ruta)} corresponde a su llave privada.")
+
+
 def cargar_certificado(ruta: str, clave: str):
     """(llave privada, certificado) del .p12. CertificadoError con el motivo si falla."""
     if not os.path.exists(ruta):
@@ -38,8 +72,9 @@ def cargar_certificado(ruta: str, clave: str):
     try:
         with open(ruta, "rb") as fh:
             llave, cert, _ = pkcs12.load_key_and_certificates(fh.read(), clave.encode() if clave else None)
-    except (ValueError, OSError) as e:
-        raise CertificadoError(f"No se pudo abrir el certificado {os.path.basename(ruta)} (¿clave incorrecta?): {e}") from e
+    except (ValueError, OSError):
+        # Clave incorrecta o cifrado antiguo: la alternativa lo distingue (falla si es la clave).
+        return _cargar_con_openssl(ruta, clave)
     if llave is None or cert is None:
         raise CertificadoError(f"El certificado {os.path.basename(ruta)} no trae llave privada y certificado.")
     return llave, cert

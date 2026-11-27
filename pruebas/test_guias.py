@@ -266,4 +266,26 @@ main_mod.configuracion.obtener_empresa = lambda ruc: empresa if ruc == RUC else 
 assert client.get(f"/empresas/{RUC}/comprobantes/09-T009-000001").status_code == 404
 assert client.post("/empresas/20555555555/guias", json=guia_09()).status_code == 404
 
+# 13. .p12 con cifrado antiguo (RC2-40): lo abre la alternativa con openssl; con clave mala falla claro
+import shutil, subprocess
+if shutil.which("openssl"):
+    k, c = os.path.join(base, "k.pem"), os.path.join(base, "c.pem")
+    with open(k, "wb") as fh:
+        fh.write(llave.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
+    with open(c, "wb") as fh:
+        fh.write(cert.public_bytes(serialization.Encoding.PEM))
+    viejo = os.path.join(base, "viejo.p12")
+    r = subprocess.run(["openssl", "pkcs12", "-export", "-inkey", k, "-in", c, "-out", viejo, "-passout", "pass:clave123"]
+                       + (["-legacy"] if b"OpenSSL 3" in subprocess.run(["openssl", "version"], capture_output=True).stdout else []),
+                       capture_output=True)
+    if r.returncode == 0:
+        from app import firma_xml
+        l2, c2 = firma_xml.cargar_certificado(viejo, "clave123")
+        assert c2.serial_number == cert.serial_number
+        try:
+            firma_xml.cargar_certificado(viejo, "mala")
+            raise AssertionError("aceptó una clave incorrecta")
+        except firma_xml.CertificadoError as e:
+            assert "clave" in str(e)
+
 print("OK: guías (09 y 31) — XML firmado válido, envío por ticket, reenvío, rechazos y validaciones")
