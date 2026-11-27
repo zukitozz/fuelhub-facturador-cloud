@@ -199,6 +199,15 @@ def emitir(empresa: Empresa, guia: GuiaEntrada) -> dict:
             registro_guias.guardar(ruc, codigo, estado="error", des_obse=str(e))
             rechazos.registrar(ruc, codigo, "error", str(e), "red")
             raise GuiaNoEnviable(f"SUNAT no disponible: {e}") from e
+        if e.http in (401, 403):
+            # Con un token recién renovado, es que SUNAT no autoriza a esta empresa/usuario a
+            # emitir guías por la API (no es un defecto de la guía): se corrige en SOL.
+            registro_guias.guardar(ruc, codigo, estado="error", des_obse=str(e))
+            rechazos.registrar(ruc, codigo, "error", str(e), "sunat")
+            raise GuiaNoEnviable(
+                f"SUNAT no autoriza el envío de guías para {ruc} ({e.http}): revisar en SOL que el usuario "
+                f"{empresa.sol_usuario} tenga permiso de guías de remisión electrónicas y que la empresa "
+                f"esté habilitada para emitir GRE. Detalle: {e}", http=409) from e
         # SUNAT respondió y no la recibió (datos inválidos, serie no habilitada...): rechazo.
         fila = registro_guias.guardar(ruc, codigo, estado="rechazado", des_obse=str(e), codigo_error=e.codigo)
         rechazos.registrar(ruc, codigo, "rechazado", str(e), "sunat")

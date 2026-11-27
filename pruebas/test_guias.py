@@ -200,6 +200,18 @@ gre._http = http_400
 r = client.post(f"/empresas/{RUC}/guias", json=guia_09(numeracion="T001-000004"))
 assert r.status_code == 201 and r.json()["estado"] == "rechazado" and r.json()["codigo_error"] == "1000", r.json()
 
+# 6b. 401 al enviar aunque el token sea nuevo: es un problema de permisos en SOL (409), no un rechazo de la guía
+def http_401(metodo, url, **kw):
+    if metodo == "POST" and "/comprobantes/" in url:
+        return 401, {"status": 401, "message": "Unauthorized"}
+    return _orig(metodo, url, **kw)
+
+
+gre._http = http_401
+r = client.post(f"/empresas/{RUC}/guias", json=guia_09(numeracion="T001-000010"))
+assert r.status_code == 409 and "SOL" in r.json()["detail"], r.text
+assert client.get(f"/empresas/{RUC}/comprobantes/09-T001-000010").json()["estado"] == "error"
+
 # 7. Sin red: 502, y el mismo número se puede reintentar
 def http_caida(metodo, url, **kw):
     if metodo == "POST" and "/comprobantes/" in url:
