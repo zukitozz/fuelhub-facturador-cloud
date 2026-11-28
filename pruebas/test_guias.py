@@ -136,13 +136,13 @@ assert raiz.find(".//cac:DriverPerson", ns) is None                       # ...s
 assert raiz.find(".//cac:TransportEquipment", ns) is None                 # ...ni vehículo
 
 # lo que se envió a SUNAT: zip con el xml, hash correcto, bearer
-envio = hubo(lambda l: l[0] == "POST" and l[1].endswith(f"/{RUC}-09-T001-000001"))[0]
+envio = hubo(lambda l: l[0] == "POST" and l[1].endswith(f"/{RUC}-09-T001-1"))[0]
 assert envio[3]["Authorization"] == "Bearer TOKEN-1"
 archivo = json.loads(envio[2])["archivo"]
-assert archivo["nomArchivo"] == f"{RUC}-09-T001-000001.zip"
+assert archivo["nomArchivo"] == f"{RUC}-09-T001-1.zip"
 crudo = base64.b64decode(archivo["arcGreZip"])
 assert hashlib.sha256(crudo).hexdigest() == archivo["hashZip"]
-assert zipfile.ZipFile(io.BytesIO(crudo)).namelist() == [f"{RUC}-09-T001-000001.xml"]
+assert zipfile.ZipFile(io.BytesIO(crudo)).namelist() == [f"{RUC}-09-T001-1.xml"]
 # el token se pidió con el usuario SOL completo
 tok = hubo(lambda l: "oauth2/token" in l[1])[0]
 assert b"username=20111111111USUARIO1" in tok[2] and b"grant_type=password" in tok[2]

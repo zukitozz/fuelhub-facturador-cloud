@@ -124,7 +124,10 @@ def _con_token(empresa: Empresa, operacion):
 
 
 def _base(ruc: str, tipo: str, numeracion: str) -> str:
-    return f"{ruc}-{tipo}-{numeracion}"
+    # SUNAT (error 1036) exige que el nombre coincida con cbc:ID del XML, que va sin ceros
+    # a la izquierda en el correlativo: T001-1, no T001-000001.
+    serie, correlativo = numeracion.split("-", 1)
+    return f"{ruc}-{tipo}-{serie}-{int(correlativo)}"
 
 
 def _aplicar_ticket(empresa: Empresa, codigo: str, ticket: str, resultado: dict) -> dict:
