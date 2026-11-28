@@ -120,7 +120,11 @@ def construir(guia: dict, ruc_emisor: str, razon_social_emisor: str) -> bytes:
     _sub(_sub(_sub(firma, "cac:DigitalSignatureAttachment"), "cac:ExternalReference"),
          "cbc:URI", f"#{ID_FIRMA}")
 
-    _parte_identificada(raiz, "cac:DespatchSupplierParty", guia["remitente"])
+    # 09: el emisor es el remitente. 31: el emisor es el transportista; SUNAT (1034) lo toma
+    # de DespatchSupplierParty y el remitente va en Shipment/Delivery/Despatch/DespatchParty.
+    _parte_identificada(raiz, "cac:DespatchSupplierParty",
+                        guia["remitente"] if es_remitente
+                        else {"numero_documento": ruc_emisor, "razon_social": razon_social_emisor})
     _parte_identificada(raiz, "cac:DeliveryCustomerParty", guia["destinatario"])
     if es_remitente and guia.get("proveedor"):
         _parte_identificada(raiz, "cac:SellerSupplierParty", guia["proveedor"])
@@ -172,6 +176,12 @@ def construir(guia: dict, ruc_emisor: str, razon_social_emisor: str) -> bytes:
         # Transporte público: SUNAT (3617) pide la fecha de entrega de los bienes al transportista.
         _sub(salida, "cbc:ActualDespatchDate", guia["fecha_traslado"].strftime("%Y-%m-%d"))
     _direccion(salida, "cac:DespatchAddress", guia["partida"])
+    if not es_remitente:
+        rem = guia["remitente"]
+        parte = _sub(salida, "cac:DespatchParty")
+        _sub(_sub(parte, "cac:PartyIdentification"), "cbc:ID", rem["numero_documento"],
+             schemeID=rem.get("tipo_documento", "6"))
+        _sub(_sub(parte, "cac:PartyLegalEntity"), "cbc:RegistrationName", rem["razon_social"])
 
     if modalidad == "02" or not es_remitente:
         v = guia["vehiculo"]
