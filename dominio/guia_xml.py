@@ -167,7 +167,11 @@ def construir(guia: dict, ruc_emisor: str, razon_social_emisor: str) -> bytes:
 
     entrega = _sub(envio, "cac:Delivery")
     _direccion(entrega, "cac:DeliveryAddress", guia["llegada"])
-    _direccion(_sub(entrega, "cac:Despatch"), "cac:DespatchAddress", guia["partida"])
+    salida = _sub(entrega, "cac:Despatch")
+    if es_remitente and modalidad == "01":
+        # Transporte público: SUNAT (3617) pide la fecha de entrega de los bienes al transportista.
+        _sub(salida, "cbc:ActualDespatchDate", guia["fecha_traslado"].strftime("%Y-%m-%d"))
+    _direccion(salida, "cac:DespatchAddress", guia["partida"])
 
     if modalidad == "02" or not es_remitente:
         v = guia["vehiculo"]
