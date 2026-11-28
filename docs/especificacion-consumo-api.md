@@ -416,3 +416,14 @@ La **factura de flete** se emite igual que cualquier factura (sección 1). El v�
 - Autenticación: hoy no hay ninguna; el mecanismo está por definir.
 - Un comprobante `rechazado` aún no devuelve CDR en el `GET`.
 - El estado de un resumen que SUNAT cierra con errores (código `99` del ticket) se muestra como `aceptado`: el veredicto real está en el `cdr` del resumen (`ResponseCode`), que conviene revisar al archivarlo.
+
+## 10. Autenticación (API key con alcance por RUC)
+
+Cada cliente envía su clave en el encabezado `X-API-Key`; solo sirve para los RUC que se le asignaron
+(`401` clave inválida o ausente cuando se exige, `403` RUC fuera de su alcance).
+
+**Migración progresiva:** por ahora la API sigue aceptando llamadas **sin** clave (se registran en el log
+como `SIN API KEY`, para saber qué cliente falta migrar). El corte se hace en `api_keys.yaml` (junto a
+`empresas.yaml`, se relee solo): `exigir_rucs: [...]` corta empresa por empresa y `exigir: true` corta todo.
+Claves nuevas: `python -m app.claves nueva --nombre <cliente> --rucs <ruc1,ruc2|*>` (se muestra una sola vez;
+en el archivo queda solo su hash). `/salud` no requiere clave. `FACTURADOR_API_DOCS=0` apaga `/docs` y `/openapi.json`.

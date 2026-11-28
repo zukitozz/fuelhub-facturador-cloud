@@ -11,11 +11,13 @@ from contextlib import asynccontextmanager
 from datetime import date, datetime
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query, Request
+import os
+
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 
-from . import archivos, ciclo, configuracion, consulta_integrada, consultas, estados, guias, qr, rechazos, registro_resumenes, reenvio, reintentos, resumenes, sfs_cliente, simulado, ticket_resumen
+from . import archivos, ciclo, configuracion, consulta_integrada, consultas, estados, guias, qr, seguridad, rechazos, registro_resumenes, reenvio, reintentos, resumenes, sfs_cliente, simulado, ticket_resumen
 from .esquemas import ComprobanteAceptado, ComprobanteEntrada, EstadoComprobante, GuiaEntrada
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -35,6 +37,9 @@ app = FastAPI(
     title="facturador-api",
     description="Recibe comprobantes, los firma y envía a SUNAT vía SFS, y expone el CDR de respuesta.",
     lifespan=_ciclo_de_vida,
+    dependencies=[Depends(seguridad.autorizar)],  # API key con alcance por RUC (ver app/seguridad.py)
+    # FACTURADOR_API_DOCS=0 apaga Swagger y el esquema OpenAPI (no exponer el mapa de la API).
+    **({} if os.getenv("FACTURADOR_API_DOCS", "1") != "0" else {"docs_url": None, "redoc_url": None, "openapi_url": None}),
 )
 
 
